@@ -35,10 +35,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	defer cleanup()
 
-	server := &http.Server{
-		Addr:    cfg.Address,
-		Handler: appHandler,
-	}
+	server := newHTTPServer(
+		cfg.Address,
+		appHandler,
+		newTLSConfig(),
+	)
 
 	serverErrors := make(chan error, 1)
 
