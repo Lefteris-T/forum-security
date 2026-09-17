@@ -1,882 +1,896 @@
-# Forum Image Upload Extension — Task Plan
+# Forum Security Extension — Learning And Implementation Plan
 
 ## Goal
 
-Extend the existing Go forum-authentication project so registered users can create a post with text and an optional image. Users and guests must be able to view the image when reading the post.
+Extend the existing forum with the mandatory security requirements from:
 
-Supported image types for this extension:
+1. `docs/exercise-security.md`
+2. `docs/audit-security.md`
 
-- JPEG
-- PNG
-- GIF
+Preserve the completed forum, OAuth, image-upload, SQLite, Docker, password,
+and session behavior. Build the extension in small, testable commits so every
+security control can be explained during the audit.
 
-Maximum upload size:
-
-- 20 MiB (`20 * 1024 * 1024`, or 20,971,520 bytes), displayed to users as
-  20 MB
-
-This plan is based on the uploaded `forum-authentication-lefteris` codebase. It preserves the current layered architecture:
+The existing architecture remains:
 
 ```text
-HTTP handler
--> validation / service
--> repository
--> SQLite migrations
--> templates / static files
+cmd/forum
+-> configuration and application lifecycle
+-> HTTP/TLS server and middleware
+-> router and handlers
+-> services
+-> repositories
+-> SQLite
 ```
 
-Do not implement everything in one step. Each phase should end with tests and a small git commit.
+Do not rewrite authentication, sessions, or password handling. Extend and
+verify the current implementation.
 
----
+## Source Of Truth
 
-## Current Architecture Notes
+If documents disagree, follow this order for the security extension:
 
-Important files already in the project:
-
-- `internal/web/handler/post_creation.go`
-  - Handles `GET /posts/new` and `POST /posts`.
-  - Currently calls `r.ParseForm()`.
-  - Sends `title`, `body`, and `categoryIDs` to `PostService`.
-
-- `internal/service/post.go`
-  - Validates authenticated author.
-  - Calls `validation.ValidatePost`.
-  - Delegates persistence to `PostRepository.Create`.
-
-- `internal/validation/post.go`
-  - Owns text/category validation.
-  - `PostInput` currently contains `Title`, `Body`, and `CategoryIDs`.
-
-- `internal/repository/posts.go`
-  - `Create(authorID, title, body, categoryIDs)` inserts into `posts`.
-  - `List`, `Detail`, `ListByCategory`, `ListByAuthor`, and `ListLikedByUser` build post read models.
-
-- `migrations/002_forum_content.sql`
-  - Creates the existing `posts` table.
-
-- `internal/database/migrate.go`
-  - Applies numbered migrations in order.
-  - Add a new migration file instead of editing old applied migrations.
-
-- `templates/new_post.html`
-  - Current post form.
-
-- `templates/post.html`
-  - Post detail page visible to users and guests.
-
-- `templates/home.html`
-  - Post listing page.
-
-- `static/`
-  - Already served by the router at `/static/`.
-  - A new `static/uploads/` folder can be used for uploaded images.
-
-- `go.mod`
-  - Already includes `github.com/google/uuid`.
-  - No new third-party package is needed.
-
----
-
-## Fixed Decisions
-
-- Keep backend in Go.
-- Use only allowed packages already compatible with the subject.
-- Store image files on disk, not as BLOBs in SQLite.
-- Store only the public image path in the database.
-- Use a new migration such as `migrations/005_post_images.sql`.
-- Keep uploads under `static/uploads/`.
-- Add `static/uploads/` to `.gitignore`, but keep the directory with a placeholder such as `.gitkeep`.
-- Use UUID filenames so two users cannot overwrite each other's images.
-- Do not trust the browser's filename or `Content-Type`.
-- Detect the real file type from file bytes using `http.DetectContentType`, then
-  confirm that it is a decodable JPEG, PNG, or GIF with the standard-library
-  image decoders.
-- Do not rely on `Content-Length` or `ParseMultipartForm`'s memory argument as
-  an upload-size limit.
-- Bound the complete HTTP request and independently enforce the exact image
-  limit while streaming at most `MaxImageSize + 1` bytes.
-- Accept an image of exactly 20 MiB and reject one of 20 MiB plus one byte.
-- If no image is uploaded, post creation should work exactly as before.
-- Treat an absent file part as “no image”; reject a selected zero-byte file as
-  an invalid image.
-- If image validation fails, do not create the post.
-- If the database insert fails after saving a file, clean up the saved file.
-- Store text-only image paths as SQL `NULL` and expose them to templates as an
-  empty string.
-- Write uploads through a temporary file and atomically rename them only after
-  validation and copying succeed.
-- Persist uploads across Docker container replacement.
-- Keep guests able to view post images.
-- Do not add JavaScript.
-
----
-
-# Phase 0 — Align Project Documentation
-
-## Goal
-
-Make the repository instructions describe the image-upload extension before
-production work begins.
-
-## Documentation Changes
-
-Update `docs/AGENTS.md` and `docs/PRD.md` so they treat the completed
-forum-authentication implementation as the baseline and image upload as the
-current extension.
-
-The source-of-truth order should become:
-
-1. `docs/exercise-image-upload.md`
-2. `docs/audit-image-upload.md`
-3. `docs/PRD.md`
-4. `docs/tasks.md`
+1. `docs/exercise-security.md`
+2. `docs/audit-security.md`
+3. `docs/PRD.md`, after it is aligned with this extension
+4. this task plan
 5. `README.md`
 6. existing tests and code
 
-Remove stale statements that prohibit image uploads. Preserve authentication,
-OAuth, sessions, forum behavior, and all existing security requirements as
-regression requirements rather than reimplementing them.
+Before production changes, update stale project guidance that still describes
+image upload as the current extension. Image upload remains required regression
+behavior, but security is now the active extension.
 
-Remove references to deleted authentication exercise/audit files and to
-`docs/setup-guide.md` unless that setup guide is intentionally restored.
+## Scope Classification
 
-## Acceptance Checks
+### Mandatory for the audit
 
-- no active project document says image upload is out of scope
-- no source-of-truth entry points to a deleted document
-- the PRD records the exact supported formats, size boundary, storage approach,
-  public visibility, and Docker persistence decision
+- serve the forum through HTTPS
+- load a configurable certificate and private key
+- configure TLS deliberately, including the minimum version and cipher policy
+- configure HTTP server read, write, header, and idle timeouts
+- implement rate limiting that returns `429 Too Many Requests`
+- keep passwords stored as bcrypt hashes
+- keep session identifiers as unique UUIDs
+- keep session state on the server rather than inside the cookie
+- enforce secure cookie behavior when HTTPS is enabled
+- handle startup, TLS, HTTP, and internal errors safely
+- use only allowed packages
+- add focused tests and preserve all existing behavior
+- document a reproducible HTTPS setup for the auditor
+
+### Additional hardening after mandatory work
+
+- basic security response headers
+- disabling static directory listings
+- optional HTTP-to-HTTPS redirect
+- optional Content Security Policy
+- optional HSTS for a trusted-certificate deployment
+
+### Bonus, deferred until all mandatory checks pass
+
+- password-protected or encrypted SQLite database
+
+SQLite encryption is not part of the first passing implementation. It usually
+requires a different SQLite build or extension and must not delay mandatory
+work.
+
+## Existing Security Baseline To Preserve
+
+- bcrypt password hashing in `internal/service/password.go`
+- parameterized SQL and `users.password_hash`
+- opaque UUID session IDs in `internal/session/manager.go`
+- server-side sessions in SQLite
+- one active session per user
+- session expiry and logout invalidation
+- `HttpOnly` and `SameSite=Lax` cookies
+- generic invalid-credentials behavior
+- recovery and request-logging middleware
+- graceful shutdown
+- bounded and validated image uploads
+- public image viewing for guests
+- OAuth state and PKCE protections
+- safe template escaping
+
+## Working Method For Every Phase
+
+Use this cycle for every behavior:
+
+1. Explain the threat or audit requirement in plain language.
+2. Identify the smallest architectural boundary that should own it.
+3. Write a focused failing test where practical.
+4. Implement only that behavior.
+5. Run the focused tests.
+6. Run `go test ./...` for regressions.
+7. Review the diff and explain why it is safe.
+8. Make one small commit.
+
+Before each commit, be able to answer:
+
+- What problem does this change prevent?
+- Why does this code belong in this package?
+- Which test proves the behavior?
+- What happens when the operation fails?
+- Did an existing forum feature change accidentally?
+
+Do not postpone all tests until the end. The final test phase is a verification
+gate, not the first time security behavior is tested.
+
+---
+
+# Phase 0 — Align Documents And Record The Baseline
+
+## Learn
+
+- distinguish transport security, application security, and data-at-rest
+  security
+- understand which requirements already exist and which are new
+- understand that bcrypt hashes passwords; it does not encrypt them
+
+## Tasks
+
+- update `docs/AGENTS.md` and `docs/PRD.md` so the security exercise is the
+  active extension and the completed image-upload work is baseline behavior
+- record the source-of-truth order from this plan
+- run the existing test suite before changing production code
+- inspect `go.mod` and confirm that only the allowed direct dependencies are
+  used
+- record the current findings:
+  - HTTP only
+  - no explicit TLS configuration
+  - no server request timeouts
+  - no rate limiter
+  - bcrypt and UUID sessions already implemented
+
+## Acceptance
+
+- project documents no longer disagree about the active exercise
+- `go test ./...` passes before implementation begins
+- no production code changes are made in this phase
 
 ## Suggested Commit
 
 ```text
-docs: define image upload extension requirements
+docs: define forum security extension scope
 ```
 
 ---
 
-# Phase 1 — Baseline And Flow Check
+# Phase 1 — Define And Validate HTTPS Configuration
 
-## Goal
+## Learn
 
-Confirm the current project works before changing it.
+- separate configuration validation from server startup
+- understand why certificate paths and private keys must not be hard-coded
+- understand fail-fast startup behavior
 
-## Understand
+## Decisions
 
-Trace this current flow:
-
-```text
-GET /posts/new
--> PostCreationHandler.handleGet
--> CategoryRepository.All
--> templates/new_post.html
-
-POST /posts
--> PostCreationHandler.handlePost
--> r.ParseForm
--> validation.PostInput
--> PostService.Create
--> PostRepository.Create
--> redirect to /posts/{id}
-```
-
-Also confirm:
-
-- `internal/app/app.go` wires `http.FileServer(http.Dir(resolveProjectPath("static")))`.
-- `/static/` is already a public route.
-- `templates/post.html` is visible to guests.
-
-## Implementation
-
-No production code changes.
-
-## Acceptance Checks
-
-Run:
-
-```bash
-go test ./...
-```
-
-If local permissions block Go cache creation, use temporary caches so the
-working tree is not polluted:
-
-```bash
-GOCACHE=/tmp/forum-image-upload-gocache \
-GOPATH=/tmp/forum-image-upload-gopath \
-go test ./...
-```
-
-On PowerShell:
-
-```powershell
-$env:GOCACHE=Join-Path $env:TEMP "forum-image-upload-gocache"
-$env:GOPATH=Join-Path $env:TEMP "forum-image-upload-gopath"
-go test ./...
-```
-
-## Suggested Commit
+Use configuration such as:
 
 ```text
-docs: map image upload extension points
+FORUM_HTTPS_ENABLED
+FORUM_TLS_CERT_FILE
+FORUM_TLS_KEY_FILE
 ```
 
----
+Keep plain HTTP only as an explicitly selected development/test mode. The
+documented audit command must start HTTPS.
 
-# Phase 2 — Database Field For Post Images
-
-## Goal
-
-Allow posts to remember an optional image path.
-
-## Implementation
-
-Add a new migration:
+The invariant is:
 
 ```text
-migrations/005_post_images.sql
+HTTPS enabled -> certificate path and key path are both required
 ```
 
-Suggested schema change:
+Do not log or return private-key contents.
 
-```sql
-ALTER TABLE posts
-ADD COLUMN image_path TEXT;
-```
+## Tasks
 
-Keep it nullable because old posts and text-only posts have no image.
-
-Use one consistent nullable-value policy:
-
-- write `NULL` when `ImagePath` is empty, for example with `NULLIF(?, '')` or a
-  nullable query argument
-- read it into the Go read models with `COALESCE(p.image_path, '')` or
-  `sql.NullString`
-- never scan a SQL `NULL` directly into a plain Go string
-
-Update read/write models:
-
-- Add `ImagePath string` to `repository.PostListItem`.
-- Add `ImagePath string` to `repository.PostDetail`.
-
-Add `ImagePath string` to `internal/model/post.go` only if that domain model is
-used by the implemented flow; it is not currently required by the post read
-queries.
-
-Update repository queries:
-
-- `Create` should insert `image_path`.
-- `List` should select `p.image_path`.
-- `Detail` should select `p.image_path`.
-- `ListByCategory` should select `p.image_path`.
-- `ListByAuthor` should select `p.image_path`.
-- `ListLikedByUser` should select `p.image_path`.
+- extend `internal/config.Config` with HTTPS, certificate, and key settings
+- parse and validate the HTTPS boolean
+- reject configurations with only one of the certificate/key paths
+- reject missing certificate/key paths when HTTPS is enabled
+- decide whether file existence belongs in config validation or application
+  startup, and test that boundary consistently
+- update `.env.example` with placeholders only
 
 ## Tests
 
-Add or update tests in:
+- HTTPS disabled permits empty certificate settings
+- HTTPS enabled accepts both paths
+- HTTPS enabled rejects a missing certificate path
+- HTTPS enabled rejects a missing key path
+- invalid boolean values fail clearly
+- no error includes certificate or key contents
 
-- `internal/database/content_schema_test.go`
-- `internal/repository/posts_test.go`
-
-Cover:
-
-- migration adds `posts.image_path`
-- upgrading a database containing a pre-migration post preserves that post
-- creating a text-only post stores SQL `NULL` and reads it as an empty string
-- creating a post with an image path returns that path from `Detail`
-- list/filter methods preserve image paths
-- existing post tests still pass
-
-## Acceptance Checks
+## Focused Check
 
 ```bash
-go test ./internal/database ./internal/repository
+go test ./internal/config
 ```
 
 ## Suggested Commit
 
 ```text
-feat: add optional post image field
+feat: add validated HTTPS configuration
 ```
 
 ---
 
-# Phase 3 — Image Upload Rules
+# Phase 2 — Define The TLS Policy
 
-## Goal
+## Learn
 
-Create one small, testable place that understands image validation.
+- understand certificates versus cipher suites
+- understand TLS negotiation
+- understand why TLS 1.3 cipher suites are selected by Go rather than through
+  `tls.Config.CipherSuites`
 
-## Implementation
+## Policy
 
-Add a focused package or file for image upload rules, for example:
+- use the standard library `crypto/tls`
+- reject TLS 1.0 and TLS 1.1
+- use TLS 1.2 as the minimum unless the final compatibility decision requires
+  TLS 1.3 only
+- if TLS 1.2 is supported, explicitly allow only modern ECDHE suites using
+  AES-GCM or ChaCha20-Poly1305
+- allow Go to manage TLS 1.3 cipher suites
+- do not enable RC4, 3DES, CBC-only legacy suites, or RSA key-exchange suites
+- document the reason for the policy
 
-```text
-internal/upload/image.go
-internal/upload/image_test.go
-```
+TLS 1.2 with an explicit modern suite list plus Go-managed TLS 1.3 is the
+clearest policy to demonstrate to the auditor.
 
-Suggested responsibilities:
+## Tasks
 
-- maximum size constant: `20 * 1024 * 1024`
-- allowed MIME types:
-  - `image/jpeg`
-  - `image/png`
-  - `image/gif`
-- map detected MIME type to safe extension:
-  - `.jpg`
-  - `.png`
-  - `.gif`
-- exported stable errors:
-  - image too large
-  - unsupported image type
-  - empty image
-  - unreadable image
-
-The validation should inspect the actual file bytes, not only the filename or
-multipart `Content-Type`. Use `http.DetectContentType` as an initial
-classification and then use `image.DecodeConfig` with the standard-library
-JPEG, PNG, and GIF decoders to reject truncated or fake files that only contain
-a recognizable header.
-
-The size check must read through a bounded reader of `MaxImageSize + 1` bytes.
-It must work when `Content-Length` is missing or false. It must not require the
-whole upload to be held in memory.
+- add a small helper that constructs `*tls.Config`
+- keep TLS construction separate from `Run` so it can be unit tested
+- set `MinVersion`
+- set the TLS 1.2 cipher list deliberately
+- avoid insecure skip-verification settings
 
 ## Tests
 
-Cover:
+- minimum version rejects TLS versions below the policy
+- configured TLS 1.2 suites match the approved list
+- weak suites are absent
+- TLS configuration does not disable normal TLS 1.3 support
 
-- accepts small, valid JPEG image bytes
-- accepts small, valid PNG image bytes
-- accepts small, valid GIF image bytes
-- rejects unsupported content
-- rejects truncated or fake JPEG/PNG/GIF content
-- accepts a file of exactly 20 MiB when it is otherwise a valid supported image
-- rejects a file of 20 MiB plus one byte
-- enforces the limit when the input size is not declared in advance
-- handles a missing optional upload as “no image”
-- rejects a present zero-byte upload as an invalid image
-- preserves every byte so the saved file is not corrupted after detection
-
-## Acceptance Checks
+## Focused Check
 
 ```bash
-go test ./internal/upload
+go test ./internal/app
 ```
 
 ## Suggested Commit
 
 ```text
-feat: validate post image uploads
+feat: define secure TLS policy
 ```
 
 ---
 
-# Phase 4 — Disk Storage For Uploaded Images
+# Phase 3 — Harden The HTTP Server With Timeouts
 
-## Goal
+## Learn
 
-Save valid images safely under `static/uploads/`.
+- understand slow-client and Slowloris-style resource exhaustion
+- understand the difference between header, body, response, and keep-alive
+  timeouts
+- balance DoS protection with legitimate 20 MiB image uploads
 
-## Implementation
+## Initial Timeout Decision
 
-Extend the upload package or add a small storage type, for example:
-
-```text
-internal/upload/storage.go
-```
-
-Suggested behavior:
-
-- ensure `static/uploads/` exists on startup or before saving
-- generate filenames using `github.com/google/uuid`
-- save files with a safe extension based on detected content type
-- create the directory with predictable permissions such as `0755`
-- create a temporary file in the destination filesystem, copy and validate the
-  bounded input, close it, then atomically rename it to the final UUID filename
-- use predictable file permissions such as `0644`
-- remove temporary or partial files on every failed read, validation, close, or
-  rename operation
-- return a browser path like:
+Start with explicit, documented values such as:
 
 ```text
-/static/uploads/{uuid}.png
+ReadHeaderTimeout: 5 seconds
+ReadTimeout:        2 minutes
+WriteTimeout:       2 minutes
+IdleTimeout:        60 seconds
+MaxHeaderBytes:     1 MiB
 ```
 
-Do not use the original uploaded filename for storage.
+Review these values during integration testing. Do not choose a very short body
+timeout that breaks valid uploads.
 
-Expose deletion through the storage abstraction rather than letting the HTTP
-handler translate arbitrary public paths into filesystem paths. A small
-handler-facing interface can conceptually provide:
+## Tasks
 
-```text
-Save(image input) -> public path
-Delete(public path)
-```
-
-`Delete` must only accept paths created inside the configured upload directory.
-Cleanup errors should be logged safely and must never expose filesystem paths to
-the browser.
-
-Update `.gitignore`:
-
-```text
-static/uploads/*
-!static/uploads/.gitkeep
-```
-
-Add:
-
-```text
-static/uploads/.gitkeep
-```
+- create a testable helper that constructs `http.Server`
+- set `Addr`, `Handler`, and `TLSConfig`
+- set `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, and `IdleTimeout`
+- set a reasonable maximum header size
+- retain the existing graceful shutdown behavior
 
 ## Tests
 
-Use `t.TempDir()` for storage tests.
+- every required timeout is non-zero and equals the chosen policy
+- the TLS configuration is attached to the server
+- the handler and address are preserved
+- graceful shutdown still treats `http.ErrServerClosed` as expected
 
-Cover:
-
-- saves a valid image
-- generated filename is unique
-- returned path starts with `/static/uploads/`
-- unsupported file is not saved
-- oversized file is not saved
-- storage creates the upload directory if missing
-- read/copy failure leaves no partial file
-- invalid image leaves no temporary file
-- deletion removes a stored image
-- deletion rejects paths outside the configured upload directory
-- generated image bytes are identical to the accepted input
-
-## Acceptance Checks
+## Focused Check
 
 ```bash
-go test ./internal/upload
+go test ./internal/app
 ```
 
 ## Suggested Commit
 
 ```text
-feat: store uploaded post images
+feat: configure secure server timeouts
 ```
 
 ---
 
-# Phase 5 — Service Contract For Optional Image Path
+# Phase 4 — Start And Stop The HTTPS Server Safely
 
-## Goal
+## Learn
 
-Extend post creation without pushing HTTP upload details into the service or repository.
+- understand the certificate/public-key and private-key pair
+- understand how `ListenAndServeTLS` differs from `ListenAndServe`
+- understand synchronous startup validation versus goroutine error reporting
 
-## Implementation
+## Tasks
 
-Update `validation.PostInput`:
-
-```text
-Title
-Body
-CategoryIDs
-ImagePath
-```
-
-Keep image binary/file handling outside `validation.ValidatePost`; that function should still validate post text/category data and treat `ImagePath` as already-safe internal data.
-
-Only the upload storage may produce a non-empty `ImagePath`; never populate it
-from an ordinary form text value supplied by the browser.
-
-Update `service.PostCreator` and `PostService.Create` so the repository receives the validated image path.
-
-Suggested direction:
-
-```text
-PostService.Create(authorID, validation.PostInput)
--> ValidatePost
--> posts.Create(authorID, title, body, categoryIDs, imagePath)
-```
+- load or validate the certificate/key pair before reporting successful startup
+- start the configured server with TLS when HTTPS is enabled
+- keep explicit HTTP startup only for the selected development/test mode
+- propagate bind, certificate, TLS, and serving failures clearly
+- preserve signal-driven graceful shutdown
+- ensure the server goroutine cannot block shutdown error handling
 
 ## Tests
 
-Update:
+- a valid temporary certificate/key pair can start an HTTPS test server
+- a missing certificate fails startup clearly
+- a missing key fails startup clearly
+- a malformed certificate fails startup clearly
+- a mismatched certificate/key pair fails startup clearly
+- HTTPS requests succeed with a test client that trusts the test certificate
+- shutdown completes without a leaked goroutine
 
-- `internal/validation/post_test.go`
-- `internal/service/post_test.go`
+Use temporary test certificates or fixtures that contain no real secret.
 
-Cover:
-
-- text-only post still works
-- post with `ImagePath` passes it to repository
-- invalid title/body/category still stops before repository
-- guest still cannot create a post
-
-## Acceptance Checks
+## Focused Check
 
 ```bash
-go test ./internal/validation ./internal/service
+go test ./internal/app
 ```
 
 ## Suggested Commit
 
 ```text
-feat: pass optional image path through post service
+feat: serve forum over HTTPS
 ```
 
 ---
 
-# Phase 6 — Multipart Post Creation Handler
+# Phase 5 — Generate Safe Local Certificates
 
-## Goal
+## Learn
 
-Make `POST /posts` accept normal form fields plus an optional image.
+- understand why a self-signed certificate causes a browser trust warning
+- understand Subject Alternative Names
+- understand why the private key must stay secret
 
-## Implementation
+## Tasks
 
-Update `templates/new_post.html`:
-
-```html
-<form method="post" action="/posts" enctype="multipart/form-data">
-```
-
-Add a file input:
-
-```html
-<input
-    id="image"
-    name="image"
-    type="file"
-    accept="image/jpeg,image/png,image/gif"
->
-```
-
-Add visible help text next to the input explaining that the image is optional,
-only JPEG/PNG/GIF are accepted, and the maximum size is 20 MB. The `accept`
-attribute is browser guidance only; backend validation remains mandatory.
-
-Update `internal/web/handler/post_creation.go`:
-
-- wrap the request body with `http.MaxBytesReader` before multipart parsing;
-  allow enough bounded overhead for multipart fields while enforcing the exact
-  image limit separately
-- replace `r.ParseForm()` with multipart-aware parsing and call
-  `r.MultipartForm.RemoveAll()` when temporary multipart files may exist
-- do not use `Content-Length` as proof that the request is safe
-- keep existing category parsing behavior
-- call upload validation/storage only when a file is present
-- pass the returned image path through `validation.PostInput.ImagePath`
-- return `400 Bad Request` with a useful message for:
-  - image too large
-  - unsupported image type
-  - malformed multipart form
-- return `500 Internal Server Error` for unexpected storage failure
-- if post creation fails for any reason after image save, including ordinary
-  title/body/category validation, delete the saved image file
-- distinguish expected validation failures from unexpected service/database
-  failures instead of mapping every service error to `400`
-
-Keep the handler responsible for HTTP parsing. Keep the service responsible for post business validation. Keep the repository responsible for SQL only.
-
-Preserve URL-encoded text-only post submissions if practical so existing clients
-and regression tests continue to work. The browser form itself should use
-multipart encoding.
-
-Use clear, stable messages for expected upload errors. For example:
+- add a small OpenSSL script or exact documented command
+- generate a certificate with SAN entries for `localhost` and `127.0.0.1`
+- use predictable local paths such as:
 
 ```text
-Image is too big. Maximum size is 20 MB.
-Only JPEG, PNG, and GIF images are supported.
-The selected image could not be read.
+certs/localhost.crt
+certs/localhost.key
 ```
+
+- give the private key restrictive permissions such as `0600`
+- ignore generated certificates and keys in Git and Docker build context as
+  appropriate
+- do not overwrite an existing private key silently
+- document the expected browser warning for an untrusted self-signed
+  certificate
+- never commit generated private keys
+
+## Acceptance
+
+- a new developer can generate a usable local certificate from the README
+- the certificate is valid for `localhost`
+- `git status` does not show generated certificate/private-key files
+- the application starts with the generated pair
+
+## Suggested Commit
+
+```text
+docs: add safe local certificate generation
+```
+
+---
+
+# Phase 6 — Enforce Secure Session Cookies On HTTPS
+
+## Learn
+
+- understand `Secure`, `HttpOnly`, and `SameSite`
+- understand why the cookie contains only an opaque identifier
+- understand why session state remains in SQLite
+
+## Policy
+
+HTTPS mode must never create an authentication or OAuth state cookie without
+the `Secure` flag.
+
+A safe derived rule is:
+
+```text
+effective secure cookie = HTTPS enabled OR explicitly configured secure cookie
+```
+
+This keeps direct HTTPS safe and still permits secure cookies behind a trusted
+TLS-terminating proxy.
+
+## Tasks
+
+- derive secure-cookie behavior from the validated configuration
+- apply the rule to forum session cookies
+- apply the same rule to OAuth state cookies
+- preserve `HttpOnly`, `SameSite=Lax`, path, expiration, and logout clearing
+- keep the cookie value as a UUID only
+- keep server-side expiry checks and session replacement unchanged
 
 ## Tests
 
-Update `internal/web/handler/posts_test.go` or add a new focused handler test file.
+- HTTPS always produces a `Secure` session cookie
+- HTTPS always produces secure OAuth state cookies
+- cookie remains `HttpOnly` and `SameSite=Lax`
+- cookie value parses as a UUID
+- two newly created sessions have different UUIDs
+- malformed UUID cookies do not authenticate
+- expired sessions do not authenticate
+- logout invalidates the server-side session
+- a replacement login invalidates the previous session
+- cookie contains no email, username, password, or serialized user state
 
-Cover:
-
-- existing URL-encoded text-only post test still passes
-- authenticated user can create a multipart post without image
-- authenticated user can create a multipart post with PNG/JPEG/GIF
-- invalid category still returns `400`
-- oversized image returns `400` and does not call service
-- exactly 20 MiB is accepted and 20 MiB plus one byte is rejected
-- chunked or unknown-length oversized input is rejected
-- an excessive complete multipart request is rejected before unbounded parsing
-- unsupported image returns `400` and does not call service
-- selected zero-byte image returns `400` and does not call service
-- malformed multipart input stores nothing and does not call service
-- guest upload returns `401`
-- validation failure after upload deletes the stored file
-- unexpected service/database failure after upload deletes the stored file and
-  returns a safe `500`
-- multipart temporary files are cleaned up
-
-## Acceptance Checks
+## Focused Check
 
 ```bash
-go test ./internal/web/handler
+go test ./internal/config ./internal/session ./internal/oauth ./internal/web
 ```
 
 ## Suggested Commit
 
 ```text
-feat: accept optional image in post form
+fix: enforce secure cookies for HTTPS
 ```
 
 ---
 
-# Phase 7 — Render Images For Guests And Users
+# Phase 7 — Build The Rate Limiter Core
 
-## Goal
+## Learn
 
-Show saved images on post pages, and optionally show a preview in the feed.
+- understand rate versus burst
+- understand per-client state
+- understand mutex protection, goroutine lifecycle, channels, and stale-state
+  cleanup
+- understand why tests should use a controllable clock instead of sleeping
 
-## Implementation
+## Design Decisions
 
-Update `templates/post.html`:
+- use only standard-library packages
+- use a token-bucket or similarly defensible algorithm
+- key buckets by normalized client IP and rule name
+- obtain the direct peer IP from `Request.RemoteAddr`
+- parse IPv4 and IPv6 safely with `net.SplitHostPort`
+- do not trust `X-Forwarded-For` unless a future trusted-proxy configuration is
+  explicitly added
+- protect shared state for concurrent HTTP handlers
+- inject or abstract time so tests are deterministic
+- expire inactive entries so the map cannot grow forever
+- stop any cleanup goroutine when the application shuts down
 
-```html
-{{if .Post.ImagePath}}
-    <img
-        class="post-image"
-        src="{{.Post.ImagePath}}"
-        alt="Post image"
-    >
-{{end}}
-```
+## Tasks
 
-Optionally update `templates/home.html` with a smaller preview:
-
-```html
-{{if .ImagePath}}
-    <img
-        class="post-image-preview"
-        src="{{.ImagePath}}"
-        alt="Post image preview"
-    >
-{{end}}
-```
-
-Update `static/style.css` with responsive image styles:
-
-```css
-.post-image,
-.post-image-preview {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    border-radius: 12px;
-}
-```
+- implement the limiter independently of HTTP first
+- define rate, burst, and inactivity expiry
+- implement deterministic refill/reset behavior
+- implement stale-entry cleanup
+- implement an idempotent lifecycle stop operation if a goroutine is used
 
 ## Tests
 
-Update:
+- requests/tokens within the allowance succeed
+- the next request/token is rejected
+- capacity refills after simulated time advances
+- different client keys are independent
+- different rule keys are independent
+- stale entries are removed
+- stopping cleanup more than once is safe
+- concurrent access passes under the race detector
 
-- `internal/web/handler/posts_test.go`
-- `internal/web/view/templates_test.go`
-
-Cover:
-
-- post detail renders `<img>` when `ImagePath` exists
-- post detail does not render broken image markup when `ImagePath` is empty
-- the create-post form clearly states the optional image, supported types, and
-  20 MB limit
-- a guest request to the stored image URL returns `200`, the expected
-  `Content-Type`, and bytes identical to the upload
-- guests can view the post and its image after the creating user logs out
-- public pages still contain no JavaScript
-- user text is still escaped
-
-## Acceptance Checks
+## Focused Checks
 
 ```bash
-go test ./internal/web/handler ./internal/web/view
+go test ./internal/web/middleware
+go test -race ./internal/web/middleware
 ```
 
 ## Suggested Commit
 
 ```text
-feat: render post images
+feat: add concurrent rate limiter core
 ```
 
 ---
 
-# Phase 8 — Full Integration And Error Handling
+# Phase 8 — Apply HTTP Rate-Limiting Rules
 
-## Goal
+## Learn
 
-Verify the complete user story through the real router and app wiring.
+- understand middleware ordering
+- understand why login failures and successes must both consume allowance
+- understand the difference between general DoS limiting and brute-force
+  limiting
 
-## Implementation
+## Initial Rules
 
-Update app wiring if needed so the post creation handler receives upload storage configuration.
-
-Possible constructor direction:
-
-```text
-NewPostCreationHandler(postService, categories, renderer, imageStorage)
-```
-
-Use `resolveProjectPath("static/uploads")` or an equivalent project-root-safe path when wiring production storage.
-
-The Docker image currently stores `/app/static/uploads` only in the writable
-container layer. Update `compose.yml` to mount a dedicated named volume at:
+Use conservative starting values and adjust only with evidence:
 
 ```text
-/app/static/uploads
+Global:        120 requests/minute/IP
+Login POST:      5 requests/minute/IP
+Register POST:   5 requests/minute/IP
+Post writes:    20 requests/minute/IP
+Comment writes: 30 requests/minute/IP
+Reactions:      60 requests/minute/IP
 ```
 
-Declare that volume next to the existing database volume. Ensure the non-root
-forum user can write to it. Uploaded images must remain available when the
-Compose container is replaced, not merely while one container process remains
-alive.
+Define whether the values represent a fixed window or token rate/burst in the
+documentation. Avoid counting one request twice against the same rule by
+accident.
 
-Keep all website errors safe:
+## Tasks
 
-- too large: clear `400` message
-- unsupported type: clear `400` message
-- malformed upload: `400`
-- unauthenticated: `401`
-- unexpected save/database failure: safe `500`
-
-Do not expose filesystem paths, SQL errors, or internal stack details to users.
+- add HTTP middleware around the existing router/handlers
+- apply a general per-IP rule
+- apply stricter rules to login and registration POST requests
+- apply suitable write limits to posts, comments, and reactions
+- ensure successful and failed login attempts both count
+- return `429 Too Many Requests` when blocked
+- include a valid `Retry-After` header where the algorithm can calculate it
+- keep the response generic and avoid revealing whether an account exists
+- decide explicitly how static assets are treated so one page load is not
+  unexpectedly blocked
+- connect limiter cleanup to application shutdown
+- keep request logging and panic recovery effective for `429` responses
 
 ## Tests
 
-Add integration coverage around the real HTTP stack where practical.
+- ordinary browsing stays below the general limit
+- repeated login attempts receive `429`
+- successful and failed login attempts both count
+- registration has an independent stricter rule
+- write routes use their intended rules
+- separate IPs have separate allowance
+- IPv4 and IPv6 peer addresses are normalized correctly
+- malformed `RemoteAddr` is handled safely
+- forged forwarding headers do not bypass the direct-peer policy
+- blocked responses contain no account information
+- `Retry-After` is valid when present
+- existing login, registration, posting, comment, reaction, static, and OAuth
+  tests still pass
 
-Cover:
-
-- registered/logged-in user creates a post with an image
-- redirect goes to `/posts/{id}`
-- guest can open `/posts/{id}` and see the image
-- guest can request the image URL and receive matching bytes and MIME type
-- upload bigger than 20 MB fails and creates no post
-- unsupported upload fails and creates no post
-- text-only post still works
-- old posts without images still render correctly
-- replacing the Compose container does not remove previously uploaded images
-
-## Acceptance Checks
+## Focused Checks
 
 ```bash
-go test ./internal/web ./internal/app ./...
+go test ./internal/web/middleware ./internal/web
+go test -race ./internal/web/middleware ./internal/web
 ```
-
-Manual browser check:
-
-1. Register or log in.
-2. Open `Create Post`.
-3. Create a post with title, body, category, and a PNG/JPEG/GIF image.
-4. Confirm redirect to the post detail page.
-5. Log out.
-6. Open the post again as guest.
-7. Confirm the image is visible.
-8. Try an unsupported file.
-9. Try an image larger than 20 MB.
-10. Create an image post through Docker Compose, replace the container, and
-    confirm that both the post and image still load.
 
 ## Suggested Commit
 
 ```text
-test: cover image upload flow
+feat: enforce per-client HTTP rate limits
 ```
 
 ---
 
-# Phase 9 — Cleanup, Documentation, Final Audit
+# Phase 9 — Make HTTPS Work In Docker
 
-## Goal
+## Learn
 
-Make the extension easy to review and safe to submit.
+- understand build-time files versus runtime secrets
+- understand read-only certificate mounts
+- understand container port mappings and environment configuration
 
-## Implementation
+## Tasks
 
-Update project docs:
+- configure the container for the chosen HTTPS port
+- provide certificate and key paths through environment variables
+- mount the local certificate directory read-only rather than baking a private
+  key into the image
+- set secure-cookie behavior for the HTTPS container
+- change local OAuth callback examples to `https://`
+- preserve the database and upload named volumes
+- verify the non-root container user can read mounted certificate files without
+  making the private key public
+- keep certificate keys out of the Docker build context and image layers
 
-- `README.md`
-- `docs/AGENTS.md`
-- `docs/PRD.md`
+## Acceptance
 
-Phase 0 establishes the new source of truth. In this final phase, verify and
-refine those documents so they describe the implementation that was actually
-completed and tested.
+- `docker compose up --build` serves an HTTPS URL
+- the browser receives a secure UUID session cookie
+- database and uploaded images survive container replacement
+- no private key exists in Git history or the built image
+- OAuth configuration examples use the actual HTTPS callback URL
 
-Mention:
+## Suggested Commit
 
-- supported image types
-- maximum upload size
-- where uploaded files are stored
-- uploads are ignored by git
-- how Docker persists uploaded files
-- how to run tests
+```text
+chore: run forum HTTPS in Docker
+```
 
-## Final Checks
+---
 
-Run:
+# Phase 10 — Review Errors And Technical Failures
+
+## Learn
+
+- distinguish safe browser errors from detailed operator logs
+- understand which failures happen before the HTTP server can respond
+
+## Tasks
+
+- review certificate, key, bind, serve, and shutdown errors
+- review malformed request and rate-limit responses
+- preserve generic browser responses for internal database/filesystem failures
+- preserve recovery from handler panics
+- ensure logs do not expose passwords, cookies, OAuth secrets, private keys,
+  request bodies, SQL values, or certificate contents
+- verify expected statuses including `400`, `401`, `404`, `405`, `429`, and
+  `500`
+
+## Tests
+
+- invalid startup inputs fail with useful but non-secret errors
+- representative internal errors return a generic `500`
+- rate-limit rejection returns `429`
+- malformed requests do not crash the server
+- a recovered panic does not stop later requests
+- request logging records the final status without logging secrets
+
+## Suggested Commit
+
+```text
+test: verify safe security error handling
+```
+
+---
+
+# Phase 11 — Optional Additional Hardening
+
+Complete this phase only after Phases 0–10 pass.
+
+## Part A — Basic Security Headers
+
+Consider global middleware for:
+
+```text
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: same-origin
+```
+
+Test headers on HTML, errors, and static responses.
+
+Treat these separately:
+
+- enable CSP only after verifying templates, CSS, images, and OAuth flows
+- enable HSTS only for an intentional HTTPS deployment with a trusted
+  certificate; avoid trapping local self-signed testing in a cached HSTS policy
+
+Suggested commit:
+
+```text
+feat: add basic security response headers
+```
+
+## Part B — Disable Static Directory Listings
+
+- keep valid `/static/...` files public
+- keep uploaded post images visible to guests
+- return a safe response for `/static/` and `/static/uploads/` directories
+- do not break CSS or existing image URLs
+
+Suggested commit:
+
+```text
+fix: disable static directory listings
+```
+
+## Part C — Optional HTTP Redirect
+
+If implemented:
+
+- run it on a separate configured HTTP address
+- redirect only to the configured HTTPS origin
+- avoid constructing redirect hosts from an untrusted `Host` header
+- shut both servers down cleanly
+- test query strings and paths
+
+Suggested commit:
+
+```text
+feat: redirect configured HTTP traffic to HTTPS
+```
+
+---
+
+# Phase 12 — Automated Verification Gate
+
+## Required Commands
+
+Run and fix every relevant failure:
 
 ```bash
-gofmt -w $(git ls-files '*.go')
+gofmt -w <changed-go-files>
+go vet ./...
 go test ./...
 go test -race ./...
-go vet ./...
 go build ./...
-docker build .
+docker compose build
 ```
 
-Optional manual checks:
+Do not format unrelated user files. Review the final diff after formatting.
 
-- no uploaded files committed
-- `.env` and database files still ignored
-- `static/uploads/.gitkeep` is the only committed file under uploads
-- no new dependency was added unnecessarily
-- no JavaScript was introduced
-- guests can see images but cannot create posts
-- authenticated users can create posts with or without images
-- failed upload attempts do not leave orphan database rows
-- failed database inserts do not leave orphan image files
-- exact 20 MiB images are accepted and 20 MiB plus one byte is rejected
-- unsupported SVG or text content is rejected with a clear message
-- Docker container replacement preserves uploaded images
+## Dependency Check
+
+- inspect `go.mod` and `go.sum`
+- confirm security work added no third-party dependency
+- confirm imports remain standard library plus the exercise-allowed SQLite,
+  bcrypt, and UUID packages already used by the project
+
+## Regression Check
+
+- registration and bcrypt login work
+- logout works
+- GitHub and Google OAuth regression tests pass
+- UUID session replacement works
+- public forum reading works
+- posts, comments, reactions, and filters work
+- text-only and image posts work
+- guests can view uploaded images
+- database and uploads remain persistent in Docker
 
 ## Suggested Commit
 
 ```text
-docs: document forum image uploads
+test: complete security regression coverage
 ```
 
 ---
 
-## Final Submission Checklist
+# Phase 13 — Documentation And Manual Audit Rehearsal
 
-- `go test ./...` passes.
-- `go test -race ./...` passes.
-- `go vet ./...` passes.
-- `go build ./...` passes.
-- `docker build .` passes.
-- JPEG upload works.
-- PNG upload works.
-- GIF upload works.
-- File larger than 20 MB is rejected with a clear message.
-- The exact size boundary is tested independently of `Content-Length`.
-- Unsupported file type is rejected.
-- Truncated or fake image content is rejected.
-- Text-only post creation still works.
-- Registered users can create image posts.
-- Guests cannot create posts.
-- Guests can view images on existing posts.
-- Uploaded files are served only from `/static/uploads/`.
-- Database stores image paths, not image bytes.
-- Filenames are generated by the server, not trusted from users.
-- Partial and temporary files are cleaned up after failures.
-- Uploaded files survive Docker container replacement.
-- The code follows the existing handler/service/repository structure.
+## README Requirements
 
-## Suggested Final Commit
+Document:
+
+- prerequisites, including OpenSSL and Docker if used
+- certificate generation
+- every new environment variable
+- the exact local HTTPS startup command
+- the exact HTTPS URL and expected self-signed warning
+- Docker HTTPS startup
+- TLS version and cipher-suite policy
+- server timeout policy
+- rate-limit algorithm, client key, limits, and `429` behavior
+- secure UUID/server-side session behavior
+- bcrypt password storage
+- how to run all verification commands
+- which database-encryption work is bonus and not implemented
+
+Documentation must describe the tested implementation, not an intended future
+state.
+
+## Manual Audit Walkthrough
+
+### HTTPS and TLS
+
+- start the forum with the documented certificate configuration
+- open the documented `https://` URL
+- verify HTTPS is negotiated
+- verify obsolete TLS versions are rejected
+- explain the TLS 1.2 cipher list and Go-managed TLS 1.3 suites
+- point to the configured server timeouts
+
+### Rate limiting
+
+- send normal requests successfully
+- exceed a configured limit
+- observe `429 Too Many Requests`
+- wait/refill as documented and observe requests succeed again
+- explain per-IP state, synchronization, cleanup, and shutdown
+
+### Passwords
+
+- register a test user
+- inspect SQLite:
+
+```sql
+SELECT id, email, username, password_hash FROM users;
+```
+
+- confirm the plaintext password is absent
+- confirm the stored value is a bcrypt hash beginning with a bcrypt prefix such
+  as `$2a$` or `$2b$`
+
+### Sessions and cookies
+
+- log in and inspect the session cookie in browser developer tools
+- confirm the value is a UUID
+- confirm `Secure`, `HttpOnly`, and `SameSite=Lax`
+- confirm no user data exists in the cookie
+- confirm the matching session state is stored in SQLite
+- log out and confirm the session no longer authenticates
+
+### Configuration and failures
+
+- show how certificate and key paths are configured
+- demonstrate that a missing or invalid pair fails safely
+- confirm browser-facing errors do not expose internal details
+- show that only allowed packages are used
+
+### General regression
+
+- browse as a guest
+- register and log in
+- create a text post and an image post
+- comment and react
+- verify public images still load
+- restart the container and verify persistent content remains
+
+## Suggested Commit
 
 ```text
-chore: complete forum image upload extension
+docs: add reproducible security audit guide
 ```
+
+---
+
+# Final Audit Traceability Checklist
+
+| Audit question | Required proof |
+|---|---|
+| Does the URL contain HTTPS? | Running documented `https://` URL |
+| Are cipher suites implemented? | Explicit TLS 1.2 policy plus documented Go-managed TLS 1.3 behavior |
+| Is Go TLS configured well? | Tested `tls.Config`, minimum version, and valid certificate loading |
+| Are server timeouts reduced? | Non-zero read-header, read, write, and idle timeout tests |
+| Is rate limiting implemented? | Per-IP limiter and reproducible `429` response |
+| Are passwords protected? | bcrypt code/tests and SQLite inspection showing no plaintext |
+| Is the session cookie a UUID? | Cookie inspection and UUID tests |
+| Is session state server-side? | SQLite session row and opaque cookie value |
+| Are certificate settings configurable? | Environment configuration and startup validation |
+| Are packages allowed? | Reviewed `go.mod`, imports, and no new security dependency |
+| Are errors handled? | Startup, middleware, recovery, and safe-error tests |
+| Does the project avoid crashes/leaks? | Full tests, race tests, clean goroutine shutdown, and manual run |
+| Does existing forum behavior remain? | Full regression suite and manual forum walkthrough |
+
+## Definition Of Done
+
+- every mandatory audit row has implementation, automated proof, and a manual
+  demonstration
+- all focused tests and the full regression suite pass
+- the race detector passes
+- the application builds and runs locally over HTTPS
+- the Docker deployment runs over HTTPS
+- secure session cookies are enforced in HTTPS mode
+- rate limiting returns `429` and cleans up safely
+- private keys, environment secrets, databases, logs, and uploads are not
+  committed
+- documentation matches the commands actually tested
+- each commit is small enough to explain without combining unrelated controls
+- optional hardening is clearly separated from mandatory passing work
+- database encryption remains deferred unless all mandatory work is complete
