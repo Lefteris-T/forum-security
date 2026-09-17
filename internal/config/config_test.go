@@ -11,6 +11,9 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("FORUM_SESSION_DURATION", "")
 	t.Setenv("FORUM_COOKIE_NAME", "")
 	t.Setenv("FORUM_SECURE_COOKIE", "")
+	t.Setenv("FORUM_HTTPS_ENABLED", "")
+	t.Setenv("FORUM_TLS_CERT_FILE", "")
+	t.Setenv("FORUM_TLS_KEY_FILE", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -48,6 +51,17 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SecureCookie {
 		t.Error("SecureCookie = true, want false")
 	}
+	if cfg.HTTPSEnabled {
+		t.Error("HTTPSEnabled = true, want false")
+	}
+
+	if cfg.TLSCertFile != "" {
+		t.Errorf("TLSCertFile = %q, want empty", cfg.TLSCertFile)
+	}
+
+	if cfg.TLSKeyFile != "" {
+		t.Errorf("TLSKeyFile = %q, want empty", cfg.TLSKeyFile)
+	}
 }
 func TestLoadEnvironmentOverrides(t *testing.T) {
 	t.Setenv("FORUM_ADDRESS", "127.0.0.1:9090")
@@ -55,6 +69,9 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	t.Setenv("FORUM_SESSION_DURATION", "2h")
 	t.Setenv("FORUM_COOKIE_NAME", "custom_session")
 	t.Setenv("FORUM_SECURE_COOKIE", "true")
+	t.Setenv("FORUM_HTTPS_ENABLED", "true")
+	t.Setenv("FORUM_TLS_CERT_FILE", "certs/localhost.crt")
+	t.Setenv("FORUM_TLS_KEY_FILE", "certs/localhost.key")
 
 	cfg, err := Load()
 	if err != nil {
@@ -96,6 +113,25 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	if !cfg.SecureCookie {
 		t.Error("SecureCookie = false, want true")
 	}
+	if !cfg.HTTPSEnabled {
+		t.Error("HTTPSEnabled = false, want true")
+	}
+
+	if cfg.TLSCertFile != "certs/localhost.crt" {
+		t.Errorf(
+			"TLSCertFile = %q, want %q",
+			cfg.TLSCertFile,
+			"certs/localhost.crt",
+		)
+	}
+
+	if cfg.TLSKeyFile != "certs/localhost.key" {
+		t.Errorf(
+			"TLSKeyFile = %q, want %q",
+			cfg.TLSKeyFile,
+			"certs/localhost.key",
+		)
+	}
 }
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
@@ -133,6 +169,11 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 			envKey:   "FORUM_SECURE_COOKIE",
 			envValue: "sometimes",
 		},
+		{
+			name:     "invalid HTTPS enabled",
+			envKey:   "FORUM_HTTPS_ENABLED",
+			envValue: "sometimes",
+		},
 	}
 
 	for _, tt := range tests {
@@ -143,6 +184,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 			t.Setenv("FORUM_COOKIE_NAME", "forum_session")
 			t.Setenv("FORUM_SECURE_COOKIE", "false")
 
+			t.Setenv("FORUM_HTTPS_ENABLED", "")
+			t.Setenv("FORUM_TLS_CERT_FILE", "")
+			t.Setenv("FORUM_TLS_KEY_FILE", "")
 			t.Setenv(tt.envKey, tt.envValue)
 
 			_, err := Load()
@@ -310,5 +354,76 @@ func TestLoadRejectsInvalidOAuthRedirectURL(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("Load() error = nil, want an error")
+	}
+}
+func TestLoadValidatesHTTPSCertificateSettings(t *testing.T) {
+	tests := []struct {
+		name        string
+		https       string
+		certificate string
+		key         string
+		wantError   bool
+	}{
+		{
+			name: "HTTPS disabled permits empty certificate settings",
+		},
+		{
+			name:        "HTTPS enabled accepts certificate and key",
+			https:       "true",
+			certificate: "certs/localhost.crt",
+			key:         "certs/localhost.key",
+		},
+		{
+			name:        "HTTPS disabled accepts a complete pair",
+			certificate: "certs/localhost.crt",
+			key:         "certs/localhost.key",
+		},
+		{
+			name:      "HTTPS enabled rejects missing certificate",
+			https:     "true",
+			key:       "certs/localhost.key",
+			wantError: true,
+		},
+		{
+			name:        "HTTPS enabled rejects missing key",
+			https:       "true",
+			certificate: "certs/localhost.crt",
+			wantError:   true,
+		},
+		{
+			name:        "certificate without key is rejected",
+			certificate: "certs/localhost.crt",
+			wantError:   true,
+		},
+		{
+			name:      "key without certificate is rejected",
+			key:       "certs/localhost.key",
+			wantError: true,
+		},
+		{
+			name:        "blank certificate is rejected",
+			https:       "true",
+			certificate: "   ",
+			key:         "certs/localhost.key",
+			wantError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("FORUM_HTTPS_ENABLED", tt.https)
+			t.Setenv("FORUM_TLS_CERT_FILE", tt.certificate)
+			t.Setenv("FORUM_TLS_KEY_FILE", tt.key)
+
+			_, err := Load()
+
+			if tt.wantError && err == nil {
+				t.Fatal("Load() error = nil, want an error")
+			}
+
+			if !tt.wantError && err != nil {
+				t.Fatalf("Load() returned unexpected error: %v", err)
+			}
+		})
 	}
 }

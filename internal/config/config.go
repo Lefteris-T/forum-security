@@ -17,6 +17,7 @@ const (
 	defaultSessionDuration = 24 * time.Hour
 	defaultCookieName      = "forum_session"
 	defaultSecureCookie    = false
+	defaultHTTPSEnabled    = false
 )
 
 // for providers authentication.
@@ -34,9 +35,11 @@ type Config struct {
 	SessionDuration time.Duration
 	CookieName      string
 	SecureCookie    bool
-
-	GitHub OAuthProviderConfig
-	Google OAuthProviderConfig
+	GitHub          OAuthProviderConfig
+	Google          OAuthProviderConfig
+	HTTPSEnabled    bool
+	TLSCertFile     string
+	TLSKeyFile      string
 }
 
 // Load applies defaults, reads FORUM_* overrides, and validates the result.
@@ -47,6 +50,9 @@ func Load() (Config, error) {
 		SessionDuration: defaultSessionDuration,
 		CookieName:      envOrDefault("FORUM_COOKIE_NAME", defaultCookieName),
 		SecureCookie:    defaultSecureCookie,
+		HTTPSEnabled:    defaultHTTPSEnabled,
+		TLSCertFile:     os.Getenv("FORUM_TLS_CERT_FILE"),
+		TLSKeyFile:      os.Getenv("FORUM_TLS_KEY_FILE"),
 	}
 	cfg.GitHub = OAuthProviderConfig{
 		ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
@@ -80,6 +86,19 @@ func Load() (Config, error) {
 		cfg.SecureCookie = secureCookie
 	}
 
+	httpsEnabledValue := os.Getenv("FORUM_HTTPS_ENABLED")
+	if httpsEnabledValue != "" {
+		httpsEnabled, err := strconv.ParseBool(httpsEnabledValue)
+		if err != nil {
+			return Config{}, fmt.Errorf(
+				"invalid HTTPS enabled value: %w",
+				err,
+			)
+		}
+
+		cfg.HTTPSEnabled = httpsEnabled
+	}
+
 	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -110,6 +129,9 @@ func validate(cfg *Config) error {
 	}
 
 	if err := validateCookieName(cfg.CookieName); err != nil {
+		return err
+	}
+	if err := validateHTTPS(cfg); err != nil {
 		return err
 	}
 	if err := validateOAuthProvider("github", &cfg.GitHub); err != nil {
@@ -215,6 +237,25 @@ func validateOAuthProvider(name string, cfg *OAuthProviderConfig) error {
 	}
 
 	cfg.Enabled = true
+
+	return nil
+}
+
+func validateHTTPS(cfg *Config) error {
+	hasCertificate := strings.TrimSpace(cfg.TLSCertFile) != ""
+	hasPrivateKey := strings.TrimSpace(cfg.TLSKeyFile) != ""
+
+	if hasCertificate != hasPrivateKey {
+		return fmt.Errorf(
+			"TLS certificate and key paths must be configured together",
+		)
+	}
+
+	if cfg.HTTPSEnabled && !hasCertificate {
+		return fmt.Errorf(
+			"HTTPS requires TLS certificate and key paths",
+		)
+	}
 
 	return nil
 }
