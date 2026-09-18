@@ -681,3 +681,13 @@ The goal is not only to build a working forum, but to practice the structure and
 - application configuration
 
 It provides a solid foundation for further work in backend engineering, DevOps, and application security.
+
+
+### Local HTTPS certificate
+
+OpenSSL is required to generate the local development certificate.
+
+Generate a self-signed certificate:
+
+```bash
+./scripts/generate-cert.sh

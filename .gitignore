@@ -27,3 +27,7 @@ static/uploads/*
 Thumbs.db
 .vscode/
 .idea/
+
+
+# Local TLS certificates and private keys
+certs/

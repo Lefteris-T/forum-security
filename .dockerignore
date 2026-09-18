@@ -20,3 +20,7 @@ forum
 *.test
 .vscode/
 .idea/
+
+
+# Local TLS certificates and private keys
+certs/
