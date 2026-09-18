@@ -1,7 +1,16 @@
 package app
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -77,5 +86,211 @@ func TestNewHTTPServerAppliesSecurityConfiguration(t *testing.T) {
 			server.MaxHeaderBytes,
 			64<<10,
 		)
+	}
+}
+func writeTestCertificatePair(
+	t *testing.T,
+	directory string,
+	name string,
+) (string, string) {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate test private key: %v", err)
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "localhost",
+		},
+		NotBefore: now.Add(-time.Minute),
+		NotAfter:  now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature |
+			x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+		DNSNames: []string{"localhost"},
+		IPAddresses: []net.IP{
+			net.ParseIP("127.0.0.1"),
+		},
+	}
+
+	certificateDER, err := x509.CreateCertificate(
+		rand.Reader,
+		template,
+		template,
+		&privateKey.PublicKey,
+		privateKey,
+	)
+	if err != nil {
+		t.Fatalf("create test certificate: %v", err)
+	}
+
+	certificatePath := filepath.Join(
+		directory,
+		name+".crt",
+	)
+	keyPath := filepath.Join(
+		directory,
+		name+".key",
+	)
+
+	certificatePEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certificateDER,
+	})
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+
+	if err := os.WriteFile(
+		certificatePath,
+		certificatePEM,
+		0644,
+	); err != nil {
+		t.Fatalf("write test certificate: %v", err)
+	}
+
+	if err := os.WriteFile(
+		keyPath,
+		keyPEM,
+		0600,
+	); err != nil {
+		t.Fatalf("write test private key: %v", err)
+	}
+
+	return certificatePath, keyPath
+}
+func TestLoadTLSCertificateAcceptsValidPair(t *testing.T) {
+	directory := t.TempDir()
+	certificatePath, keyPath := writeTestCertificatePair(
+		t,
+		directory,
+		"valid",
+	)
+
+	certificate, err := loadTLSCertificate(
+		certificatePath,
+		keyPath,
+	)
+	if err != nil {
+		t.Fatalf("loadTLSCertificate() error: %v", err)
+	}
+
+	if len(certificate.Certificate) == 0 {
+		t.Error("loaded certificate chain is empty")
+	}
+
+	if certificate.PrivateKey == nil {
+		t.Error("loaded private key is nil")
+	}
+}
+
+func TestLoadTLSCertificateRejectsMissingCertificate(t *testing.T) {
+	directory := t.TempDir()
+	_, keyPath := writeTestCertificatePair(
+		t,
+		directory,
+		"valid",
+	)
+
+	missingCertificate := filepath.Join(
+		directory,
+		"missing.crt",
+	)
+
+	_, err := loadTLSCertificate(
+		missingCertificate,
+		keyPath,
+	)
+	if err == nil {
+		t.Fatal("loadTLSCertificate() error = nil, want an error")
+	}
+}
+
+func TestLoadTLSCertificateRejectsMissingKey(t *testing.T) {
+	directory := t.TempDir()
+	certificatePath, _ := writeTestCertificatePair(
+		t,
+		directory,
+		"valid",
+	)
+
+	missingKey := filepath.Join(
+		directory,
+		"missing.key",
+	)
+
+	_, err := loadTLSCertificate(
+		certificatePath,
+		missingKey,
+	)
+	if err == nil {
+		t.Fatal("loadTLSCertificate() error = nil, want an error")
+	}
+}
+
+func TestLoadTLSCertificateRejectsMalformedCertificate(t *testing.T) {
+	directory := t.TempDir()
+
+	certificatePath := filepath.Join(
+		directory,
+		"malformed.crt",
+	)
+	keyPath := filepath.Join(
+		directory,
+		"malformed.key",
+	)
+
+	if err := os.WriteFile(
+		certificatePath,
+		[]byte("not a certificate"),
+		0644,
+	); err != nil {
+		t.Fatalf("write malformed certificate: %v", err)
+	}
+
+	if err := os.WriteFile(
+		keyPath,
+		[]byte("not a private key"),
+		0600,
+	); err != nil {
+		t.Fatalf("write malformed key: %v", err)
+	}
+
+	_, err := loadTLSCertificate(
+		certificatePath,
+		keyPath,
+	)
+	if err == nil {
+		t.Fatal("loadTLSCertificate() error = nil, want an error")
+	}
+}
+
+func TestLoadTLSCertificateRejectsMismatchedPair(t *testing.T) {
+	directory := t.TempDir()
+
+	firstCertificate, _ := writeTestCertificatePair(
+		t,
+		directory,
+		"first",
+	)
+	_, secondKey := writeTestCertificatePair(
+		t,
+		directory,
+		"second",
+	)
+
+	_, err := loadTLSCertificate(
+		firstCertificate,
+		secondKey,
+	)
+	if err == nil {
+		t.Fatal("loadTLSCertificate() error = nil, want an error")
 	}
 }

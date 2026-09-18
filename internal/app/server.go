@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -29,4 +30,21 @@ func newHTTPServer(
 		IdleTimeout:       serverIdleTimeout,
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
+}
+func loadTLSCertificate(
+	certificateFile string,
+	keyFile string,
+) (tls.Certificate, error) {
+	certificate, err := tls.LoadX509KeyPair(
+		certificateFile,
+		keyFile,
+	)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf(
+			"load TLS certificate and key: %w",
+			err,
+		)
+	}
+
+	return certificate, nil
 }

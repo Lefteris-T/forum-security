@@ -29,6 +29,23 @@ const shutdownTimeout = 5 * time.Second
 // Run starts the configured server and shuts it down when ctx is cancelled.
 // Startup and shutdown failures are returned to the command package.
 func Run(ctx context.Context, cfg config.Config) error {
+	tlsConfig := newTLSConfig()
+
+	if cfg.HTTPSEnabled {
+		certificate, err := loadTLSCertificate(
+			cfg.TLSCertFile,
+			cfg.TLSKeyFile,
+		)
+		if err != nil {
+			return err
+		}
+
+		tlsConfig.Certificates = append(
+			tlsConfig.Certificates,
+			certificate,
+		)
+	}
+
 	appHandler, cleanup, err := buildHandler(cfg)
 	if err != nil {
 		return err
@@ -38,15 +55,21 @@ func Run(ctx context.Context, cfg config.Config) error {
 	server := newHTTPServer(
 		cfg.Address,
 		appHandler,
-		newTLSConfig(),
+		tlsConfig,
 	)
 
 	serverErrors := make(chan error, 1)
 
 	go func() {
-		serverErrors <- normalizeServerError(
-			server.ListenAndServe(),
-		)
+		var serveError error
+
+		if cfg.HTTPSEnabled {
+			serveError = server.ListenAndServeTLS("", "")
+		} else {
+			serveError = server.ListenAndServe()
+		}
+
+		serverErrors <- normalizeServerError(serveError)
 	}()
 
 	select {
