@@ -54,6 +54,37 @@ func TestRecoveryTurnsPanicIntoSafe500(t *testing.T) {
 	) {
 		t.Fatal("panic details leaked to response")
 	}
+	wantBody := http.StatusText(
+		http.StatusInternalServerError,
+	) + "\n"
+
+	if rec.Body.String() != wantBody {
+		t.Errorf(
+			"body = %q, want %q",
+			rec.Body.String(),
+			wantBody,
+		)
+	}
+
+	output := logs.String()
+
+	if strings.Contains(output, "super-secret") {
+		t.Fatal("panic details leaked to logs")
+	}
+
+	for _, expected := range []string{
+		"panic recovered",
+		"method=GET",
+		"path=/panic",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Errorf(
+				"log does not contain %q: %q",
+				expected,
+				output,
+			)
+		}
+	}
 }
 func TestRecoveryAllowsFollowingRequest(t *testing.T) {
 	var logs bytes.Buffer

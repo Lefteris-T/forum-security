@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -292,5 +293,50 @@ func TestLoadTLSCertificateRejectsMismatchedPair(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("loadTLSCertificate() error = nil, want an error")
+	}
+}
+func TestLoadTLSCertificateDoesNotExposePrivateKeyContents(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	directory := t.TempDir()
+
+	certificatePath, keyPath := writeTestCertificatePair(
+		t,
+		directory,
+		"secret",
+	)
+
+	const privateKeyContents = "private-key-super-secret-content"
+
+	if err := os.WriteFile(
+		keyPath,
+		[]byte(privateKeyContents),
+		0600,
+	); err != nil {
+		t.Fatalf("write malformed private key: %v", err)
+	}
+
+	_, err := loadTLSCertificate(
+		certificatePath,
+		keyPath,
+	)
+	if err == nil {
+		t.Fatal("loadTLSCertificate() error = nil, want an error")
+	}
+
+	if strings.Contains(err.Error(), privateKeyContents) {
+		t.Fatal("private-key contents leaked through startup error")
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"load TLS certificate and key",
+	) {
+		t.Errorf(
+			"error lacks safe operation context: %q",
+			err,
+		)
 	}
 }

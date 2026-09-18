@@ -93,6 +93,7 @@ func TestWriteErrorRendersSafeStatus(t *testing.T) {
 		{"not found", http.StatusNotFound},
 		{"method not allowed", http.StatusMethodNotAllowed},
 		{"conflict", http.StatusConflict},
+		{"too many requests", http.StatusTooManyRequests},
 		{"internal server error", http.StatusInternalServerError},
 	}
 

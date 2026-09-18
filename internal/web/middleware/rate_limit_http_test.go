@@ -414,6 +414,17 @@ func TestHTTPRateLimiterEnforcesSpecificRules(t *testing.T) {
 					http.StatusTooManyRequests,
 				)
 			}
+			wantBody := http.StatusText(
+				http.StatusTooManyRequests,
+			) + "\n"
+
+			if rec.Body.String() != wantBody {
+				t.Errorf(
+					"limited response body = %q, want %q",
+					rec.Body.String(),
+					wantBody,
+				)
+			}
 
 			if got := rec.Header().Get("Retry-After"); got != tt.retryAfter {
 				t.Errorf(

@@ -12,6 +12,10 @@ type statusWriter struct {
 
 // WriteHeader remembers the final status code for request logging.
 func (w *statusWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }

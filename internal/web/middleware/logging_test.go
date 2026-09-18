@@ -115,3 +115,116 @@ func TestRequestLoggingDoesNotLogSecrets(t *testing.T) {
 		}
 	}
 }
+func TestRequestLoggingRecordsTooManyRequests(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+
+	logger := log.New(
+		&logs,
+		"",
+		0,
+	)
+
+	next := http.HandlerFunc(func(
+		w http.ResponseWriter,
+		_ *http.Request,
+	) {
+		w.Header().Set("Retry-After", "12")
+
+		http.Error(
+			w,
+			http.StatusText(http.StatusTooManyRequests),
+			http.StatusTooManyRequests,
+		)
+	})
+
+	handler := RequestLogging(logger, next)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/login",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusTooManyRequests,
+		)
+	}
+
+	output := logs.String()
+
+	for _, expected := range []string{
+		"method=POST",
+		"path=/login",
+		"status=429",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Errorf(
+				"log does not contain %q: %q",
+				expected,
+				output,
+			)
+		}
+	}
+}
+func TestRequestLoggingKeepsFirstWrittenStatus(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+
+	logger := log.New(
+		&logs,
+		"",
+		0,
+	)
+
+	next := http.HandlerFunc(func(
+		w http.ResponseWriter,
+		_ *http.Request,
+	) {
+		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	handler := RequestLogging(logger, next)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/posts",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf(
+			"response status = %d, want %d",
+			rec.Code,
+			http.StatusCreated,
+		)
+	}
+
+	output := logs.String()
+
+	if !strings.Contains(output, "status=201") {
+		t.Errorf(
+			"log does not contain first status: %q",
+			output,
+		)
+	}
+
+	if strings.Contains(output, "status=500") {
+		t.Errorf(
+			"log contains status not sent to client: %q",
+			output,
+		)
+	}
+}
