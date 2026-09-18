@@ -699,3 +699,34 @@ When HTTPS is enabled, session and OAuth state cookies are always marked
 `FORUM_SECURE_COOKIE=true` may also be used when TLS terminates at a trusted
 reverse proxy. Do not enable secure cookies for plain local HTTP, because
 browsers do not send `Secure` cookies over HTTP.
+
+### Rate limiting
+
+The application uses in-memory token-bucket rate limiting per client IP
+address.
+
+| Scope | Rate | Burst |
+|---|---:|---:|
+| All HTTP requests | 120/minute | 120 |
+| Login submissions | 5/minute | 5 |
+| Registration submissions | 5/minute | 5 |
+| Post creation | 20/minute | 20 |
+| Comment creation | 30/minute | 30 |
+| Reactions | 60/minute | 60 |
+
+Every request consumes a token from the global limit. Matching POST
+requests also consume a token from their route-specific limit.
+
+Rejected requests receive HTTP `429 Too Many Requests` and a
+`Retry-After` response header.
+
+Client identity is derived from the direct connection address
+(`RemoteAddr`). Untrusted `X-Forwarded-For` and `X-Real-IP` headers are
+ignored because clients can forge them. If the application is deployed
+behind a trusted reverse proxy, rate limiting must either be configured
+at the proxy or extended with an explicit trusted-proxy configuration.
+
+The limiter is stored in application memory. Its state resets when the
+application restarts and is not shared between multiple application
+instances. Users sharing one public IP address also share the same
+allowance.

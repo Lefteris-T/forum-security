@@ -115,9 +115,18 @@ func buildHandler(
 			err,
 		)
 	}
+	rateLimiter, err := middleware.NewHTTPRateLimiter()
+	if err != nil {
+		db.Close()
 
-	// The caller owns this cleanup function once construction succeeds.
+		return nil, nil, fmt.Errorf(
+			"create HTTP rate limiter: %w",
+			err,
+		)
+	}
+
 	cleanup := func() {
+		rateLimiter.Stop()
 		db.Close()
 	}
 
@@ -359,6 +368,7 @@ func buildHandler(
 	)
 
 	appHandler := authenticate(router)
+	appHandler = rateLimiter.Middleware(appHandler)
 
 	logger := log.New(
 		os.Stdout,

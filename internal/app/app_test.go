@@ -208,3 +208,65 @@ func TestBuildHandlerOmitsGoogleOAuthRoutesWhenDisabled(t *testing.T) {
 		}
 	}
 }
+func TestBuildHandlerAppliesLoginRateLimit(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		DatabasePath:    t.TempDir() + "/forum.db",
+		SessionDuration: time.Hour,
+		CookieName:      "forum_session",
+	}
+
+	handler, cleanup, err := buildHandler(cfg)
+	if err != nil {
+		t.Fatalf("buildHandler() error: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	for requestNumber := 1; requestNumber <= 6; requestNumber++ {
+		form := url.Values{
+			"email":    {"missing@example.com"},
+			"password": {"wrong-password"},
+		}
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/login",
+			strings.NewReader(form.Encode()),
+		)
+		req.Header.Set(
+			"Content-Type",
+			"application/x-www-form-urlencoded",
+		)
+		req.RemoteAddr = "203.0.113.10:4567"
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if requestNumber <= 5 &&
+			rec.Code == http.StatusTooManyRequests {
+			t.Fatalf(
+				"request %d was limited before burst was exhausted",
+				requestNumber,
+			)
+		}
+
+		if requestNumber == 6 {
+			if rec.Code != http.StatusTooManyRequests {
+				t.Fatalf(
+					"sixth request status = %d, want %d",
+					rec.Code,
+					http.StatusTooManyRequests,
+				)
+			}
+
+			if got := rec.Header().Get("Retry-After"); got != "12" {
+				t.Errorf(
+					"Retry-After = %q, want %q",
+					got,
+					"12",
+				)
+			}
+		}
+	}
+}
