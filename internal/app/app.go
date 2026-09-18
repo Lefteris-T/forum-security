@@ -353,8 +353,8 @@ func buildHandler(
 			GitHubOAuthCallback: githubOAuthCallbackHandler,
 			GoogleOAuth:         googleOAuthHandler,
 			GoogleOAuthCallback: googleOAuthCallbackHandler,
-			Static: http.FileServer(
-				http.Dir(resolveProjectPath("static")),
+			Static: web.NewStaticFileHandler(
+				resolveProjectPath("static"),
 			),
 		},
 	)

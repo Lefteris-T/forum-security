@@ -271,7 +271,7 @@ func WithMiddleware(
 		logger,
 		middleware.Recovery(
 			logger,
-			next,
+			middleware.SecurityHeaders(next),
 		),
 	)
 }

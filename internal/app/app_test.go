@@ -270,3 +270,92 @@ func TestBuildHandlerAppliesLoginRateLimit(t *testing.T) {
 		}
 	}
 }
+func TestBuildHandlerAddsSecurityHeadersToAllResponses(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	cfg := config.Config{
+		DatabasePath:    t.TempDir() + "/forum.db",
+		SessionDuration: time.Hour,
+		CookieName:      "forum_session",
+	}
+
+	handler, cleanup, err := buildHandler(cfg)
+	if err != nil {
+		t.Fatalf("buildHandler() error: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{
+			name:       "HTML page",
+			path:       "/",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "not found error",
+			path:       "/missing",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "static stylesheet",
+			path:       "/static/style.css",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "static root directory is hidden",
+			path:       "/static/",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "uploads directory is hidden",
+			path:       "/static/uploads/",
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	wantHeaders := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "same-origin",
+	}
+
+	for _, tt := range tests {
+		tt := tt
+
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodGet,
+				tt.path,
+				nil,
+			)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf(
+					"status = %d, want %d",
+					rec.Code,
+					tt.wantStatus,
+				)
+			}
+
+			for name, want := range wantHeaders {
+				if got := rec.Header().Get(name); got != want {
+					t.Errorf(
+						"%s = %q, want %q",
+						name,
+						got,
+						want,
+					)
+				}
+			}
+		})
+	}
+}
