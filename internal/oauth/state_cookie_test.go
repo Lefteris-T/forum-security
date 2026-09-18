@@ -129,3 +129,27 @@ func TestClearStateCookie(t *testing.T) {
 		)
 	}
 }
+func TestClearStateCookieUsesSecureFlag(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	ClearStateCookie(
+		recorder,
+		"oauth_state",
+		true,
+	)
+
+	response := recorder.Result()
+	defer response.Body.Close()
+
+	cookies := response.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf(
+			"cookie count = %d, want 1",
+			len(cookies),
+		)
+	}
+
+	if !cookies[0].Secure {
+		t.Error("cleared cookie Secure = false, want true")
+	}
+}

@@ -168,3 +168,29 @@ func TestManagerClearsCookie(t *testing.T) {
 		)
 	}
 }
+func TestManagerClearsSecureCookieWhenConfigured(t *testing.T) {
+	manager := NewManager(
+		"forum_session",
+		time.Hour,
+		true,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	manager.Clear(recorder)
+
+	response := recorder.Result()
+	defer response.Body.Close()
+
+	cookies := response.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf(
+			"cookie count = %d, want 1",
+			len(cookies),
+		)
+	}
+
+	if !cookies[0].Secure {
+		t.Error("cleared cookie Secure = false, want true")
+	}
+}

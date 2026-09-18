@@ -95,9 +95,10 @@ func Load() (Config, error) {
 				err,
 			)
 		}
-
 		cfg.HTTPSEnabled = httpsEnabled
+
 	}
+	cfg.SecureCookie = cfg.HTTPSEnabled || cfg.SecureCookie
 
 	if err := validate(&cfg); err != nil {
 		return Config{}, err

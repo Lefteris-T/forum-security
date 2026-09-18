@@ -691,3 +691,11 @@ Generate a self-signed certificate:
 
 ```bash
 ./scripts/generate-cert.sh
+
+
+When HTTPS is enabled, session and OAuth state cookies are always marked
+`Secure`, even if `FORUM_SECURE_COOKIE=false`.
+
+`FORUM_SECURE_COOKIE=true` may also be used when TLS terminates at a trusted
+reverse proxy. Do not enable secure cookies for plain local HTTP, because
+browsers do not send `Secure` cookies over HTTP.

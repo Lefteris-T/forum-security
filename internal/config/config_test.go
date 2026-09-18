@@ -427,3 +427,79 @@ func TestLoadValidatesHTTPSCertificateSettings(t *testing.T) {
 		})
 	}
 }
+func TestLoadDerivesSecureCookiePolicy(t *testing.T) {
+	tests := []struct {
+		name             string
+		httpsEnabled     string
+		secureCookie     string
+		wantSecureCookie bool
+	}{
+		{
+			name:             "HTTP with insecure cookie configuration",
+			httpsEnabled:     "false",
+			secureCookie:     "false",
+			wantSecureCookie: false,
+		},
+		{
+			name:             "HTTP with explicitly secure cookie",
+			httpsEnabled:     "false",
+			secureCookie:     "true",
+			wantSecureCookie: true,
+		},
+		{
+			name:             "HTTPS forces secure cookie",
+			httpsEnabled:     "true",
+			secureCookie:     "false",
+			wantSecureCookie: true,
+		},
+		{
+			name:             "HTTPS preserves secure cookie",
+			httpsEnabled:     "true",
+			secureCookie:     "true",
+			wantSecureCookie: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(
+				"FORUM_HTTPS_ENABLED",
+				tt.httpsEnabled,
+			)
+			t.Setenv(
+				"FORUM_SECURE_COOKIE",
+				tt.secureCookie,
+			)
+
+			if tt.httpsEnabled == "true" {
+				t.Setenv(
+					"FORUM_TLS_CERT_FILE",
+					"certs/localhost.crt",
+				)
+				t.Setenv(
+					"FORUM_TLS_KEY_FILE",
+					"certs/localhost.key",
+				)
+			} else {
+				t.Setenv("FORUM_TLS_CERT_FILE", "")
+				t.Setenv("FORUM_TLS_KEY_FILE", "")
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf(
+					"Load() returned unexpected error: %v",
+					err,
+				)
+			}
+
+			if cfg.SecureCookie != tt.wantSecureCookie {
+				t.Errorf(
+					"SecureCookie = %t, want %t",
+					cfg.SecureCookie,
+					tt.wantSecureCookie,
+				)
+			}
+		})
+	}
+}
