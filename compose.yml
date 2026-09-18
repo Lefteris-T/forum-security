@@ -3,15 +3,22 @@ services:
     build: .
     container_name: forum
 
+    group_add:
+      - "${FORUM_CERT_GID}"
+
     ports:
-      - "8080:8080"
+      - "8443:8443"
 
     environment:
-      FORUM_ADDRESS: ":8080"
+      FORUM_ADDRESS: ":8443"
       FORUM_DATABASE_PATH: "/app/data/forum.db"
       FORUM_SESSION_DURATION: "24h"
       FORUM_COOKIE_NAME: "forum_session"
-      FORUM_SECURE_COOKIE: "${FORUM_SECURE_COOKIE:-false}"
+      FORUM_HTTPS_ENABLED: "true"
+      FORUM_TLS_CERT_FILE: "/run/certs/localhost.crt"
+      FORUM_TLS_KEY_FILE: "/run/certs/localhost.key"
+      FORUM_SECURE_COOKIE: "true"
+
       GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
       GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
       GITHUB_REDIRECT_URL: "${GITHUB_REDIRECT_URL:-}"
@@ -22,8 +29,10 @@ services:
     volumes:
       - forum-data:/app/data
       - forum-uploads:/app/static/uploads
+      - ./certs:/run/certs:ro
 
     restart: unless-stopped
+
 volumes:
   forum-data:
     name: forum-data

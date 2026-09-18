@@ -730,3 +730,26 @@ The limiter is stored in application memory. Its state resets when the
 application restarts and is not shared between multiple application
 instances. Users sharing one public IP address also share the same
 allowance.
+
+### Docker HTTPS
+
+Generate the local certificate before starting the container. The certificate
+directory is mounted read-only and is not copied into the Docker image.
+
+Set `FORUM_CERT_GID` in `.env` to the host user's group ID:
+
+```bash
+id -g
+Configure secure certificate permissions:
+chgrp "$(id -g)" certs certs/localhost.crt certs/localhost.key
+chmod 750 certs
+chmod 644 certs/localhost.crt
+chmod 640 certs/localhost.key
+Start the HTTPS container:
+docker compose up --build -d
+Open:
+https://localhost:8443
+A browser warning is expected because the local certificate is self-signed.
+The database and uploaded images are stored in the forum-data and
+forum-uploads named volumes. Do not use docker compose down -v unless
+you intentionally want to delete this persistent data.

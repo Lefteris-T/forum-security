@@ -30,10 +30,13 @@ RUN mkdir -p /app/data /app/static/uploads \
 
 USER forum
 
-EXPOSE 8080
+EXPOSE 8443
 
-ENV FORUM_ADDRESS=:8080
+ENV FORUM_ADDRESS=:8443
 ENV FORUM_DATABASE_PATH=/app/data/forum.db
-ENV FORUM_SECURE_COOKIE=false
+ENV FORUM_HTTPS_ENABLED=true
+ENV FORUM_TLS_CERT_FILE=/run/certs/localhost.crt
+ENV FORUM_TLS_KEY_FILE=/run/certs/localhost.key
+ENV FORUM_SECURE_COOKIE=true
 
 CMD ["/app/forum"]
