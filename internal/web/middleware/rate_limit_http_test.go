@@ -444,3 +444,143 @@ func TestHTTPRateLimiterEnforcesSpecificRules(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPRateLimiterCountsSuccessfulAndFailedLoginsTogether(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	limiter, err := newHTTPRateLimiter(func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("newHTTPRateLimiter() error = %v", err)
+	}
+	t.Cleanup(limiter.Stop)
+
+	responses := []int{
+		http.StatusSeeOther,
+		http.StatusUnauthorized,
+		http.StatusSeeOther,
+		http.StatusUnauthorized,
+		http.StatusSeeOther,
+	}
+	nextCalls := 0
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(responses[nextCalls])
+		nextCalls++
+	})
+	handler := limiter.Middleware(next)
+
+	for requestNumber, wantStatus := range responses {
+		req := httptest.NewRequest(http.MethodPost, "/login", nil)
+		req.RemoteAddr = "203.0.113.10:4567"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != wantStatus {
+			t.Fatalf(
+				"request %d status = %d, want %d",
+				requestNumber+1,
+				rec.Code,
+				wantStatus,
+			)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/login", nil)
+	req.RemoteAddr = "203.0.113.10:4567"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("sixth login status = %d, want 429", rec.Code)
+	}
+	if nextCalls != len(responses) {
+		t.Fatalf("next calls = %d, want %d", nextCalls, len(responses))
+	}
+}
+
+func TestHTTPRateLimiterKeepsClientAllowancesIndependent(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	limiter, err := newHTTPRateLimiter(func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("newHTTPRateLimiter() error = %v", err)
+	}
+	t.Cleanup(limiter.Stop)
+
+	handler := limiter.Middleware(http.HandlerFunc(func(
+		w http.ResponseWriter,
+		_ *http.Request,
+	) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login", nil)
+		req.RemoteAddr = "203.0.113.10:4567"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("first client request %d status = %d", i+1, rec.Code)
+		}
+	}
+
+	blocked := httptest.NewRequest(http.MethodPost, "/login", nil)
+	blocked.RemoteAddr = "203.0.113.10:4567"
+	blockedRec := httptest.NewRecorder()
+	handler.ServeHTTP(blockedRec, blocked)
+	if blockedRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("exhausted client status = %d, want 429", blockedRec.Code)
+	}
+
+	independent := httptest.NewRequest(http.MethodPost, "/login", nil)
+	independent.RemoteAddr = "203.0.113.11:4567"
+	independentRec := httptest.NewRecorder()
+	handler.ServeHTTP(independentRec, independent)
+	if independentRec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"independent client status = %d, want %d",
+			independentRec.Code,
+			http.StatusNoContent,
+		)
+	}
+}
+
+func TestHTTPRateLimiterKeepsLoginAndRegistrationRulesIndependent(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	limiter, err := newHTTPRateLimiter(func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("newHTTPRateLimiter() error = %v", err)
+	}
+	t.Cleanup(limiter.Stop)
+
+	handler := limiter.Middleware(http.HandlerFunc(func(
+		w http.ResponseWriter,
+		_ *http.Request,
+	) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login", nil)
+		req.RemoteAddr = "203.0.113.10:4567"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("login request %d status = %d", i+1, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/register", nil)
+	req.RemoteAddr = "203.0.113.10:4567"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"registration status = %d, want independent allowance",
+			rec.Code,
+		)
+	}
+}

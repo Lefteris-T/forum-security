@@ -12,7 +12,7 @@ const (
 	serverReadTimeout       = 2 * time.Minute
 	serverWriteTimeout      = 2 * time.Minute
 	serverIdleTimeout       = 60 * time.Second
-	serverMaxHeaderBytes    = 64 << 10
+	serverMaxHeaderBytes    = 1 << 20
 )
 
 func newHTTPServer(

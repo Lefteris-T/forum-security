@@ -1,226 +1,304 @@
 # Forum
 
-A full-stack web forum written in **Go** using the standard `net/http` package, **SQLite**, server-side HTML templates, and plain CSS.
-
-The project uses a layered architecture and test-driven development, with emphasis on authentication, sessions, persistence, HTTP correctness, and clean separation between handlers, services, repositories, and the database.
+A server-rendered forum written in Go with SQLite persistence, email/password
+and OAuth authentication, optional post images, and an HTTPS-focused security
+layer. The application uses the standard `net/http` stack and plain HTML/CSS;
+it does not require JavaScript.
 
 ## Features
 
-- User registration
-- Secure password hashing with bcrypt
-- Login and logout
-- GitHub OAuth login
-- Google OAuth / OpenID Connect login
-- UUID-based sessions
-- One active session per user
-- Public post listing and post detail pages
-- Authenticated post creation with an optional JPEG, PNG, or GIF image
-- Public post-image viewing for authenticated users and guests
-- Content-based image validation with an exact 20 MiB limit
-- Categories and category filtering
-- Comments
-- Like / dislike reactions
-- Reaction toggle and switch behavior
-- Filter posts created by the current user
-- Filter posts liked by the current user
-- Centralized HTTP routing and method handling
-- Consistent HTTP error statuses
-- Panic recovery middleware
-- Request logging
-- SQLite persistence
-- Responsive HTML/CSS interface
-- Docker and Docker Compose support
-- Persistent Docker volumes for SQLite data and uploaded images
-- Helper scripts for build, run, and stop
+- email/password registration, login, and logout
+- GitHub and Google OAuth login with state validation and PKCE
+- bcrypt password hashing
+- opaque UUID session cookies backed by server-side SQLite sessions
+- one active session per user, expiry checks, and logout invalidation
+- public posts, post details, categories, comments, and images
+- authenticated post, comment, like, and dislike actions
+- category, created-post, and liked-post filters
+- optional JPEG, PNG, and GIF uploads with an exact 20 MiB limit
+- configurable HTTPS with an explicit TLS policy
+- HTTP server timeouts and per-client rate limiting
+- secure cookies, security response headers, and panic recovery
+- SQLite migrations and persistent Docker volumes
+- unit, integration, HTTPS, and race-detector tests
 
-No JavaScript is required by the application.
+## Requirements
 
----
+- Go 1.25 or newer
+- a C compiler for `github.com/mattn/go-sqlite3`
+- OpenSSL for local certificate generation
+- Docker and Docker Compose for the container workflow
 
-## Tech Stack
+The only direct non-standard Go dependencies are the exercise-approved
+SQLite, bcrypt, and UUID packages.
 
-- **Go**
-- **net/http**
-- **html/template**
-- **SQLite**
-- **bcrypt**
-- **UUID sessions**
-- **HTML**
-- **CSS**
-- **Docker**
-- **Docker Compose**
+## Quick start with HTTPS
 
----
+Generate a self-signed certificate:
 
-## Architecture
-
-```text
-Browser
-   |
-   v
-Recovery / Logging / Authentication middleware
-   |
-   v
-Router -> HTTP handler -> validation -> service -> repository -> SQLite
-   |                                                        |
-   +---------------- template / redirect response <---------+
-
-OAuth browser flow
-   |
-   v
-OAuth start/callback -> GitHub or Google -> OAuth login service
-   -> local user + OAuth account -> existing forum session
-
-Image upload flow
-   |
-   v
-Bounded multipart request -> verified JPEG/PNG/GIF -> UUID file on disk
-   -> public image path in SQLite -> server-rendered post detail
+```bash
+make cert
 ```
 
-Project structure:
+The command creates:
 
 ```text
-forum/
-├── cmd/
-│   └── forum/
-│       └── main.go
-├── internal/
-│   ├── app/
-│   ├── config/
-│   ├── database/
-│   ├── model/
-│   ├── oauth/
-│   ├── repository/
-│   ├── service/
-│   ├── session/
-│   ├── upload/
-│   ├── validation/
-│   └── web/
-│       ├── handler/
-│       ├── middleware/
-│       └── view/
-├── migrations/
-├── templates/
-├── static/
-│   └── uploads/
-├── scripts/
-├── docs/
-├── data/
-├── Dockerfile
-├── compose.yml
-├── go.mod
-└── README.md
+certs/localhost.crt
+certs/localhost.key
 ```
 
----
+The certificate has Subject Alternative Names for `localhost` and
+`127.0.0.1`. The generation script refuses to overwrite either file. Generated
+certificates and private keys are ignored by Git and excluded from the Docker
+build context.
 
-## Database
+Create the local environment file:
 
-The application uses SQLite.
+```bash
+cp .env.example .env
+```
 
-Main tables:
+The example is ready for HTTPS without OAuth. Start the forum:
+
+```bash
+make run
+```
+
+Open:
 
 ```text
-users
-sessions
-posts
-comments
-categories
-post_categories
-post_reactions
-comment_reactions
-oauth_accounts
+https://localhost:8443
 ```
 
-Important rules:
+A browser warning is expected because the certificate is self-signed. This is
+appropriate for local development and auditing; use a certificate issued by a
+trusted authority for a public deployment.
 
-- normalized email and username are unique
-- password values are stored only as bcrypt hashes
-- OAuth-only users have no password hash
-- provider identities are unique by provider and stable provider user ID
-- UUID session identifiers
-- one active session per user
-- foreign keys enabled
-- reaction values limited to `-1` and `1`
-- one reaction per user per target
-- unique post/category relations
-- transactional multi-row writes
-- nullable post image paths; image bytes remain on disk
+The certificate can be inspected with:
 
-Migrations live in:
+```bash
+make verify-cert
+```
+
+### Explicit plain-HTTP development mode
+
+Plain HTTP is available only when selected explicitly. For a temporary local
+run:
+
+```bash
+FORUM_ADDRESS=:8080 \
+FORUM_HTTPS_ENABLED=false \
+FORUM_TLS_CERT_FILE= \
+FORUM_TLS_KEY_FILE= \
+FORUM_SECURE_COOKIE=false \
+go run ./cmd/forum
+```
+
+Open `http://localhost:8080`. Do not use this mode for the security audit or a
+public deployment.
+
+## Configuration
+
+Configuration is loaded from environment variables. The program validates it
+before opening the database or serving requests.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FORUM_ADDRESS` | `:8080` | Server listen address |
+| `FORUM_DATABASE_PATH` | `data/forum.db` | SQLite database path |
+| `FORUM_SESSION_DURATION` | `24h` | Server-side session lifetime |
+| `FORUM_COOKIE_NAME` | `forum_session` | Authentication cookie name |
+| `FORUM_SECURE_COOKIE` | `false` | Force secure cookies, including behind trusted TLS termination |
+| `FORUM_HTTPS_ENABLED` | `false` | Select direct HTTPS serving |
+| `FORUM_TLS_CERT_FILE` | empty | PEM certificate path |
+| `FORUM_TLS_KEY_FILE` | empty | PEM private-key path |
+| `GITHUB_CLIENT_ID` | empty | GitHub OAuth client ID |
+| `GITHUB_CLIENT_SECRET` | empty | GitHub OAuth client secret |
+| `GITHUB_REDIRECT_URL` | empty | GitHub callback URL |
+| `GOOGLE_CLIENT_ID` | empty | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | empty | Google OAuth client secret |
+| `GOOGLE_REDIRECT_URL` | empty | Google callback URL |
+
+When HTTPS is enabled, both TLS file paths are required. A missing, malformed,
+or mismatched certificate/key pair stops startup. Setting only one of an OAuth
+provider's three variables also stops startup; leave all three empty to disable
+that provider.
+
+HTTPS always forces secure session and OAuth state cookies, even if
+`FORUM_SECURE_COOKIE=false` was supplied:
 
 ```text
-migrations/
+effective secure cookie = HTTPS enabled OR secure cookie explicitly enabled
 ```
 
-and are applied automatically when the application starts.
+### OAuth callbacks
 
-The default local database path is:
+For the local HTTPS run, configure providers with these exact callback URLs:
 
 ```text
-data/forum.db
+https://localhost:8443/auth/github/callback
+https://localhost:8443/auth/google/callback
 ```
 
-Runtime database files are ignored by Git.
+Put real credentials only in `.env` or a deployment secret manager. Never add
+them to `.env.example`, Compose, the Dockerfile, source code, logs, or commits.
 
----
+## Docker HTTPS
 
-## Post Images
+Generate the certificate first, then allow the non-root container process to
+read the mounted key through a supplementary group:
 
-Authenticated users may attach one optional image when creating a post.
-Text-only post creation continues to work.
+```bash
+make cert
+cp .env.example .env
+host_cert_gid="$(id -g)"
+chgrp "$host_cert_gid" certs certs/localhost.crt certs/localhost.key
+chmod 750 certs
+chmod 644 certs/localhost.crt
+chmod 640 certs/localhost.key
+sed -i "s/^FORUM_CERT_GID=.*/FORUM_CERT_GID=$host_cert_gid/" .env
+docker compose up --build
+```
 
-Supported formats:
+If `make cert` reports that files already exist, keep the existing pair or
+remove it deliberately before generating a replacement. The script never
+silently replaces a private key.
+
+Open:
 
 ```text
-JPEG
-PNG
-GIF
+https://localhost:8443
 ```
 
-The exact maximum image size is 20 MiB (`20,971,520` bytes), displayed in the
-form as 20 MB. The server checks the actual bytes rather than trusting the
-browser filename, declared content type, or `Content-Length`. Empty,
-unsupported, malformed, unreadable, and oversized images are rejected without
-creating a post.
+Compose mounts `./certs` read-only at `/run/certs`; the private key is not baked
+into the image. The application runs as a non-root user. SQLite data and post
+images use the named volumes `forum-data` and `forum-uploads`.
 
-Validated images are written atomically under:
+Stop the containers without deleting persistent data:
+
+```bash
+docker compose down
+```
+
+Avoid `docker compose down -v` unless both the database and uploaded images
+should be deleted.
+
+The helper scripts provide the same common operations:
+
+```bash
+./scripts/build.sh
+./scripts/run.sh
+./scripts/stop.sh
+```
+
+## Security design
+
+### TLS policy
+
+The server uses an explicit `tls.Config` with TLS 1.2 as the minimum. TLS 1.0
+and 1.1 are therefore rejected. TLS 1.2 is restricted to ECDHE key exchange
+with AES-GCM or ChaCha20-Poly1305 authenticated encryption. RC4, 3DES,
+CBC-only suites, and static RSA key exchange are not enabled.
+
+TLS 1.2 remains available for reasonable client compatibility while the
+explicit ECDHE/AEAD list removes its legacy choices. TLS 1.3 remains enabled;
+Go deliberately controls its cipher suites because they are not configured
+through `tls.Config.CipherSuites`. The application does not use
+`InsecureSkipVerify`.
+
+### HTTP server policy
+
+The server uses non-zero resource limits:
+
+| Setting | Value | Protection |
+|---|---:|---|
+| `ReadHeaderTimeout` | 5 seconds | Slow request headers |
+| `ReadTimeout` | 2 minutes | Slow or stalled request bodies |
+| `WriteTimeout` | 2 minutes | Stalled response clients |
+| `IdleTimeout` | 60 seconds | Excessive idle keep-alive connections |
+| `MaxHeaderBytes` | 1 MiB | Oversized request headers |
+
+The two-minute body and response limits leave room for legitimate 20 MiB image
+uploads while still bounding slow clients.
+
+### Rate limiting
+
+An in-memory token bucket protects each normalized direct peer IP:
+
+| Scope | Refill rate | Burst |
+|---|---:|---:|
+| All requests | 120/minute | 120 |
+| Login `POST` | 5/minute | 5 |
+| Registration `POST` | 5/minute | 5 |
+| Post creation | 20/minute | 20 |
+| Comment creation | 30/minute | 30 |
+| Reactions | 60/minute | 60 |
+
+Every request consumes global allowance. Matching state-changing requests also
+consume allowance from their route-specific bucket. Successful and failed
+login attempts count equally. A blocked request receives a generic `429 Too
+Many Requests` response and `Retry-After` header.
+
+The key comes from `Request.RemoteAddr`; IPv4 and IPv6 are normalized and
+forwarding headers are ignored. Do not trust `X-Forwarded-For` without an
+explicit trusted-proxy boundary. When deploying behind a proxy, enforce limits
+there or add a reviewed trusted-proxy configuration.
+
+Buckets are mutex-protected, inactive entries are removed, and cleanup
+goroutines stop during application shutdown. Limiter state is local to one
+application instance and resets after restart. Users sharing a public IP also
+share its allowance. Static assets remain subject to the global limit but not
+the stricter write limits.
+
+### Passwords, sessions, and cookies
+
+- registration hashes passwords with `bcrypt.GenerateFromPassword`
+- login verifies hashes with `bcrypt.CompareHashAndPassword`
+- plaintext passwords are neither persisted nor logged
+- OAuth-only accounts do not receive invented passwords
+- session identifiers are generated UUIDs
+- cookies contain only the opaque UUID, never user or authorization state
+- session ownership and expiry are stored in SQLite
+- a new login replaces the user's previous session
+- logout deletes the server-side session
+- malformed, missing, unknown, and expired session IDs do not authenticate
+- session and OAuth state cookies use `HttpOnly` and `SameSite=Lax`
+- direct HTTPS forces the `Secure` attribute
+
+### Browser and HTTP hardening
+
+All application responses, including static files and errors, receive:
 
 ```text
-static/uploads/{uuid}.jpg
-static/uploads/{uuid}.png
-static/uploads/{uuid}.gif
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: same-origin
 ```
 
-SQLite stores only the public path, such as
-`/static/uploads/{uuid}.png`. Runtime uploads are ignored by Git and excluded
-from Docker build contexts, while `static/uploads/.gitkeep` retains the
-directory in clean checkouts. Uploading requires authentication, but post
-images are intentionally public so guests can read image posts.
+Exact static files and uploaded image URLs remain public. Directory requests
+such as `/static/` and `/static/uploads/` return `404` instead of listing their
+contents.
 
----
+HSTS is intentionally disabled for local self-signed certificates. Content
+Security Policy and an HTTP-to-HTTPS redirect are separate deployment choices
+and are not enabled here.
 
-## Filters
+### Errors and logging
 
-Public category filter:
+Invalid configuration and TLS files fail before serving. Browser-facing
+internal errors are generic and do not expose database messages, local paths,
+certificate contents, or stack traces. Panic recovery converts handler panics
+to `500 Internal Server Error` and keeps the server available.
 
-```text
-/?category=<id>
-```
+Request logs contain the method, URL path, and final status. They omit query
+strings, request bodies, cookies, authorization headers, passwords, OAuth
+tokens and secrets, private keys, certificate contents, and SQL values.
 
-Authenticated filters:
+## Forum behavior
 
-```text
-/?filter=created
-/?filter=liked
-```
+### Routes
 
----
-
-## Routes
-
-### Public
+Public routes:
 
 ```text
 GET  /
@@ -233,10 +311,10 @@ GET  /auth/github/callback
 GET  /auth/google
 GET  /auth/google/callback
 GET  /posts/{id}
-GET  /static/*
+GET  /static/{file}
 ```
 
-### Authenticated
+Authenticated routes:
 
 ```text
 POST /logout
@@ -247,390 +325,101 @@ POST /posts/{id}/react
 POST /comments/{id}/react
 ```
 
----
+OAuth routes are mounted only for configured providers.
 
-## HTTP Behaviour
-
-```text
-200  successful page response
-303  successful form submission redirect
-400  malformed or invalid request
-401  authentication required / invalid credentials
-403  authenticated user lacks permission
-404  resource or route not found
-405  method not allowed
-409  duplicate registration conflict
-502  OAuth provider failure
-500  unexpected internal error
-```
-
-Invalid image content and images larger than 20 MiB return `400 Bad Request`
-with a safe user-facing message.
-
-Successful state-changing form submissions use `303 See Other`.
-
-Ordinary GET requests do not mutate forum content. OAuth callback GET requests
-are protocol endpoints and may establish a session after validating the flow.
-
----
-
-## Sessions
-
-Authentication uses UUID-based session cookies.
-
-Default configuration:
+Useful filters:
 
 ```text
-Cookie name: forum_session
-Duration:    24h
+/?category={category-id}
+/?filter=created
+/?filter=liked
 ```
 
-Creating a new session replaces the previous active session for the same user.
+The category filter is public. Created and liked filters require a session.
 
-Session state is stored in SQLite.
+### HTTP statuses
 
----
+| Status | Meaning |
+|---:|---|
+| `200` | Successful page or file response |
+| `303` | Successful state-changing form redirect |
+| `400` | Malformed or invalid request |
+| `401` | Authentication required or invalid credentials |
+| `403` | Authenticated user lacks permission |
+| `404` | Resource or route not found |
+| `405` | Method not allowed; includes `Allow` where applicable |
+| `409` | Duplicate email or username |
+| `429` | Rate limit exceeded |
+| `500` | Generic unexpected internal failure |
+| `502` | OAuth provider failure |
 
-## Configuration
+### Post images
 
-Environment variables:
+One optional image may accompany a post. Supported formats are JPEG, PNG, and
+GIF, with an exact maximum of 20 MiB (`20,971,520` bytes). The server checks
+the bytes rather than trusting the filename, declared content type, or
+`Content-Length`, and decodes the image before publication.
+
+Validated files are written atomically under `static/uploads` with generated
+UUID filenames. SQLite stores only their public path. Failed post creation
+cleans up a newly written image. Uploading requires authentication, while
+reading an image remains public.
+
+## Persistence and architecture
+
+Migrations in `migrations/` run automatically at startup. The principal tables
+are:
 
 ```text
-FORUM_ADDRESS
-FORUM_DATABASE_PATH
-FORUM_SESSION_DURATION
-FORUM_COOKIE_NAME
-FORUM_SECURE_COOKIE
-GITHUB_CLIENT_ID
-GITHUB_CLIENT_SECRET
-GITHUB_REDIRECT_URL
-GOOGLE_CLIENT_ID
-GOOGLE_CLIENT_SECRET
-GOOGLE_REDIRECT_URL
+users
+sessions
+oauth_accounts
+categories
+posts
+post_categories
+comments
+post_reactions
+comment_reactions
 ```
 
-Defaults:
+Foreign keys are enabled. Multi-row operations that must remain consistent use
+transactions, and repository SQL uses parameters.
+
+Request processing follows these boundaries:
 
 ```text
-FORUM_ADDRESS=:8080
-FORUM_DATABASE_PATH=data/forum.db
-FORUM_SESSION_DURATION=24h
-FORUM_COOKIE_NAME=forum_session
-FORUM_SECURE_COOKIE=false
+environment configuration
+-> application and HTTPS server lifecycle
+-> logging / recovery / security headers / rate limiting
+-> authentication
+-> router and handlers
+-> validation and services
+-> repositories
+-> SQLite and managed upload storage
 ```
 
-Each OAuth provider is enabled only when all three of its variables are set. A
-provider with all three values empty is disabled; partial configuration stops
-startup with an error. Disabled providers do not appear on the login and
-registration pages.
-
-Local callback URLs:
+Important directories:
 
 ```text
-http://localhost:8080/auth/github/callback
-http://localhost:8080/auth/google/callback
+cmd/forum/              executable entry point
+internal/app/           application wiring and server lifecycle
+internal/config/        environment parsing and validation
+internal/database/      SQLite opening and migrations
+internal/oauth/         OAuth providers, state, PKCE, and callbacks
+internal/repository/    parameterized persistence
+internal/service/       authentication and forum business rules
+internal/session/       UUID cookie mechanics
+internal/upload/        image validation and atomic storage
+internal/web/           router, handlers, middleware, and views
+migrations/             ordered database schema migrations
+templates/              server-rendered HTML
+static/                 CSS, background art, and runtime uploads
+docs/                   requirements, task plan, and audit checklist
 ```
 
-See [docs/PRD.md](docs/PRD.md) for the current extension requirements and
-architecture.
+## Testing and verification
 
----
-
-## Run Locally
-
-Run without OAuth:
-
-```bash
-go run ./cmd/forum
-```
-
-Run with real GitHub and/or Google login:
-
-```bash
-cp .env.example .env
-# Edit .env and fill all three variables for each provider you enable.
-
-set -a
-source .env
-set +a
-go run ./cmd/forum
-```
-
-``` or make run
-
-`.env` is intentionally ignored by Git. Do not commit it.
-
-Open:
-
-```text
-http://localhost:8080
-```
-
-The application creates the local SQLite data directory when needed.
-Local uploaded images are created under `static/uploads/` and are ignored by
-Git.
-
----
-
-## Tests
-
-Run the full suite:
-
-```bash
-go test ./...
-```
-
-Run with the race detector:
-
-```bash
-go test -race ./...
-```
-
-Format tracked Go files:
-
-```bash
-gofmt -w $(git ls-files '*.go')
-```
-
-Static analysis:
-
-```bash
-go vet ./...
-```
-
-Build:
-
-```bash
-go build ./...
-```
-
-The test suite covers configuration, server lifecycle, migrations,
-repositories, validation, authentication, sessions, posts, optional image
-uploads, exact size boundaries, cleanup behavior, comments, reactions,
-filters, routing, middleware, template rendering, HTTP integration flows, and
-real SQLite persistence.
-
-HTTP integration tests use `httptest.Server` with a real temporary SQLite database.
-
----
-
-## Docker
-
-Build the image:
-
-```bash
-docker build -t forum .
-```
-
-Run directly:
-
-```bash
-docker run --rm \
-  --name forum \
-  --env-file .env \
-  -p 8080:8080 \
-  -v forum-data:/app/data \
-  -v forum-uploads:/app/static/uploads \
-  forum
-```
-
-Omit `--env-file .env` when running the container without OAuth or other
-environment overrides.
-
-The named volumes:
-
-```text
-forum-data
-forum-uploads
-```
-
-store the SQLite database and uploaded images outside the container so users,
-posts, comments, reactions, and post images survive container recreation.
-
----
-
-## Docker Compose
-
-Start without OAuth:
-
-```bash
-docker compose up --build
-```
-
-Start with real OAuth credentials from `.env`:
-
-```bash
-docker compose --env-file .env up --build
-```
-
-Stop:
-
-```bash
-docker compose down
-```
-
-The Compose configuration uses `forum-data` for SQLite and `forum-uploads` for
-`/app/static/uploads`.
-
-Avoid:
-
-```bash
-docker compose down -v
-```
-
-unless you intentionally want to delete both the persistent database and
-uploaded-image volumes.
-
----
-
-## Helper Scripts
-
-```text
-scripts/build.sh
-scripts/run.sh
-scripts/stop.sh
-```
-
-Build:
-
-```bash
-./scripts/build.sh
-```
-
-Run:
-
-```bash
-./scripts/run.sh
-```
-
-Stop:
-
-```bash
-./scripts/stop.sh
-```
-
-The scripts use `set -eu` so failures are not silently ignored.
-
----
-
-## Logging
-
-Requests are logged with useful HTTP information such as:
-
-```text
-method
-path
-status
-```
-
-The logging middleware avoids exposing request bodies, passwords, cookies, or other sensitive values.
-
-Unexpected panics are recovered and converted into safe `500 Internal Server Error` responses so the server can continue handling later requests.
-
----
-
-## Security
-
-Implemented security-related decisions include:
-
-- bcrypt password hashing
-- parameterized SQL queries
-- server-side sessions
-- UUID session IDs
-- unique active session per user
-- foreign key enforcement
-- protected authenticated routes
-- OAuth state bound to the initiating browser with a short-lived cookie
-- PKCE S256 for GitHub and Google
-- stable provider identifiers and verified provider emails
-- transactional creation of local users and OAuth identities
-- provider access tokens discarded after identity lookup
-- centralized method enforcement
-- safe internal error responses
-- automatic HTML escaping through `html/template`
-- bounded multipart requests and an independently enforced image-byte limit
-- content detection plus JPEG/PNG/GIF decoding before image publication
-- server-generated UUID image filenames and constrained cleanup paths
-- no JavaScript dependency
-- runtime databases, uploaded images, and environment files excluded from Git
-
-OAuth client secrets belong only in environment variables or a deployment
-secret manager. Never place real credentials in `.env.example`, Compose,
-Dockerfiles, source code, documentation, logs, or commits. Rotate a credential
-immediately if it is exposed.
-
-For HTTPS deployments:
-
-```text
-FORUM_SECURE_COOKIE=true
-```
-
----
-
-## UI
-
-The frontend uses server-rendered HTML and CSS only.
-
-It includes:
-
-- responsive navigation
-- post cards
-- category badges
-- login and registration forms
-- post creation form
-- optional responsive post images
-- comment cards
-- like / dislike controls
-- developer-themed background artwork
-- responsive mobile layout
-
-Static assets are served from:
-
-```text
-/static/
-```
-
----
-
-## Useful SQLite Commands
-
-```bash
-sqlite3 data/forum.db
-```
-
-Inside SQLite:
-
-```sql
-.tables
-SELECT * FROM users;
-SELECT * FROM posts;
-SELECT id, title, image_path FROM posts;
-SELECT * FROM comments;
-```
-
-Exit:
-
-```sql
-.quit
-```
-
----
-
-## Development Workflow
-
-```text
-write test
-→ observe expected failure
-→ implement the smallest change
-→ run focused tests
-→ run full test suite
-→ format
-→ commit
-```
-
----
-
-## Final Verification
+Run the standard verification gate:
 
 ```bash
 gofmt -w $(git ls-files '*.go')
@@ -638,118 +427,40 @@ go vet ./...
 go test ./...
 go test -race ./...
 go build ./...
-docker build -t forum .
+docker compose build
 ```
 
-Also verify manually that:
+The suite covers configuration, TLS policy, certificate failures, HTTPS
+requests, server shutdown, rate limits, headers, panic recovery, authentication,
+OAuth, UUID sessions, migrations, repositories, forum behavior, upload
+boundaries, templates, and real temporary SQLite databases.
 
-- registration and login work
-- real GitHub and Google login work with exact configured callback URLs
-- session replacement behaves correctly
-- guests cannot access protected actions
-- posts and comments persist
-- authenticated users can create text-only and image posts
-- JPEG, PNG, and GIF uploads work and remain visible to guests
-- unsupported and larger-than-20-MiB images are rejected
-- uploaded images survive Compose container replacement
-- reactions toggle and switch correctly
-- category, created, and liked filters work
-- unknown routes return `404`
-- invalid methods return `405`
-- SQLite data survives container recreation
-- no JavaScript exists in the repository
-- no database, uploaded image, secret, log, or build artifact is committed
+## Security audit walkthrough
 
----
+1. Generate the certificate with `make cert` and inspect it with
+   `make verify-cert`.
+2. Start the HTTPS Compose deployment and open
+   `https://localhost:8443`.
+3. Confirm the negotiated connection is HTTPS and TLS 1.0/1.1 are unavailable.
+4. Register a user and inspect `users.password_hash` in SQLite; it must be a
+   bcrypt hash, never the submitted password.
+5. Log in and inspect `forum_session`; its value must be a UUID with `Secure`,
+   `HttpOnly`, and `SameSite=Lax` attributes.
+6. Confirm session identity and expiry exist in the `sessions` table rather
+   than in the cookie.
+7. Submit more than five login attempts from one client within the burst and
+   confirm a generic `429` response with `Retry-After`.
+8. Confirm `/static/style.css` and exact uploaded image URLs work while
+   `/static/` and `/static/uploads/` return `404`.
+9. Inspect the security headers on successful, error, and static responses.
+10. Run the complete verification gate and confirm no secret, certificate,
+    database, runtime upload, log, or build artifact is tracked by Git.
 
-## Project Goal
+Database encryption is bonus work and is not implemented. Passwords are
+correctly protected with one-way bcrypt hashing; the SQLite database itself is
+not password-encrypted.
 
-The goal is not only to build a working forum, but to practice the structure and behaviour of a real web application:
-
-- HTTP request lifecycle
-- authentication
-- session management
-- database design
-- SQL migrations
-- transactional persistence
-- middleware
-- routing
-- server-side rendering
-- bounded image validation and filesystem storage
-- testing
-- containerization
-- application configuration
-
-It provides a solid foundation for further work in backend engineering, DevOps, and application security.
-
-
-### Local HTTPS certificate
-
-OpenSSL is required to generate the local development certificate.
-
-Generate a self-signed certificate:
-
-```bash
-./scripts/generate-cert.sh
-
-
-When HTTPS is enabled, session and OAuth state cookies are always marked
-`Secure`, even if `FORUM_SECURE_COOKIE=false`.
-
-`FORUM_SECURE_COOKIE=true` may also be used when TLS terminates at a trusted
-reverse proxy. Do not enable secure cookies for plain local HTTP, because
-browsers do not send `Secure` cookies over HTTP.
-
-### Rate limiting
-
-The application uses in-memory token-bucket rate limiting per client IP
-address.
-
-| Scope | Rate | Burst |
-|---|---:|---:|
-| All HTTP requests | 120/minute | 120 |
-| Login submissions | 5/minute | 5 |
-| Registration submissions | 5/minute | 5 |
-| Post creation | 20/minute | 20 |
-| Comment creation | 30/minute | 30 |
-| Reactions | 60/minute | 60 |
-
-Every request consumes a token from the global limit. Matching POST
-requests also consume a token from their route-specific limit.
-
-Rejected requests receive HTTP `429 Too Many Requests` and a
-`Retry-After` response header.
-
-Client identity is derived from the direct connection address
-(`RemoteAddr`). Untrusted `X-Forwarded-For` and `X-Real-IP` headers are
-ignored because clients can forge them. If the application is deployed
-behind a trusted reverse proxy, rate limiting must either be configured
-at the proxy or extended with an explicit trusted-proxy configuration.
-
-The limiter is stored in application memory. Its state resets when the
-application restarts and is not shared between multiple application
-instances. Users sharing one public IP address also share the same
-allowance.
-
-### Docker HTTPS
-
-Generate the local certificate before starting the container. The certificate
-directory is mounted read-only and is not copied into the Docker image.
-
-Set `FORUM_CERT_GID` in `.env` to the host user's group ID:
-
-```bash
-id -g
-Configure secure certificate permissions:
-chgrp "$(id -g)" certs certs/localhost.crt certs/localhost.key
-chmod 750 certs
-chmod 644 certs/localhost.crt
-chmod 640 certs/localhost.key
-Start the HTTPS container:
-docker compose up --build -d
-Open:
-https://localhost:8443
-A browser warning is expected because the local certificate is self-signed.
-The database and uploaded images are stored in the forum-data and
-forum-uploads named volumes. Do not use docker compose down -v unless
-you intentionally want to delete this persistent data.
+The authoritative security requirements and detailed phase plan are in
+[`docs/exercise-security.md`](docs/exercise-security.md),
+[`docs/audit-security.md`](docs/audit-security.md), and
+[`docs/tasks.md`](docs/tasks.md).

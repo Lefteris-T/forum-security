@@ -81,11 +81,11 @@ func TestNewHTTPServerAppliesSecurityConfiguration(t *testing.T) {
 		})
 	}
 
-	if server.MaxHeaderBytes != 64<<10 {
+	if server.MaxHeaderBytes != 1<<20 {
 		t.Errorf(
 			"MaxHeaderBytes = %d, want %d",
 			server.MaxHeaderBytes,
-			64<<10,
+			1<<20,
 		)
 	}
 }
