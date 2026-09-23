@@ -181,19 +181,20 @@ func (l *HTTPRateLimiter) Stop() {
 func (l *HTTPRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := clientKey(r)
+		rule := requestRateLimitRule(r)
 
 		if !l.global.Allow(key) {
-			writeRateLimitExceeded(w, time.Second)
+			writeRateLimitExceeded(w, time.Second, rule)
 			return
 		}
 
-		rule := requestRateLimitRule(r)
 		if rule != rateLimitRuleNone {
 			ruleLimiter, exists := l.byRule[rule]
 			if exists && !ruleLimiter.Allow(key) {
 				writeRateLimitExceeded(
 					w,
 					retryAfterForRule(rule),
+					rule,
 				)
 				return
 			}
@@ -223,6 +224,7 @@ func retryAfterForRule(rule rateLimitRule) time.Duration {
 func writeRateLimitExceeded(
 	w http.ResponseWriter,
 	retryAfter time.Duration,
+	rule rateLimitRule,
 ) {
 	seconds := int(retryAfter / time.Second)
 	if seconds < 1 {
@@ -233,10 +235,33 @@ func writeRateLimitExceeded(
 		"Retry-After",
 		strconv.Itoa(seconds),
 	)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusTooManyRequests)
 
-	http.Error(
+	returnPath, returnLabel := rateLimitReturnLink(rule)
+	_, _ = fmt.Fprintf(
 		w,
-		http.StatusText(http.StatusTooManyRequests),
-		http.StatusTooManyRequests,
+		`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Too Many Requests</title></head>
+<body><main><h1>Too Many Requests</h1><p>Please wait %d seconds before trying again.</p><p><a href="%s">%s</a></p></main></body>
+</html>
+`,
+		seconds,
+		returnPath,
+		returnLabel,
 	)
+}
+
+func rateLimitReturnLink(rule rateLimitRule) (string, string) {
+	switch rule {
+	case rateLimitRuleLogin:
+		return "/login", "Return to login"
+
+	case rateLimitRuleRegister:
+		return "/register", "Return to registration"
+
+	default:
+		return "/", "Return to the forum"
+	}
 }

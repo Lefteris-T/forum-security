@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -318,6 +319,12 @@ func TestHTTPRateLimiterEnforcesGlobalLimit(t *testing.T) {
 	if got := rec.Header().Get("Retry-After"); got != "1" {
 		t.Errorf("Retry-After = %q, want %q", got, "1")
 	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want HTML", got)
+	}
+	if !strings.Contains(rec.Body.String(), `href="/"`) {
+		t.Fatal("global limit page does not link back to the forum")
+	}
 
 	if nextCalls != 120 {
 		t.Errorf("next calls = %d, want 120", nextCalls)
@@ -331,13 +338,14 @@ func TestHTTPRateLimiterEnforcesSpecificRules(t *testing.T) {
 		path       string
 		allowed    int
 		retryAfter string
+		returnPath string
 	}{
-		{"login", "/login", 5, "12"},
-		{"register", "/register", 5, "12"},
-		{"post", "/posts", 20, "3"},
-		{"comment", "/posts/42/comments", 30, "2"},
-		{"post reaction", "/posts/42/react", 60, "1"},
-		{"comment reaction", "/comments/15/react", 60, "1"},
+		{"login", "/login", 5, "12", "/login"},
+		{"register", "/register", 5, "12", "/register"},
+		{"post", "/posts", 20, "3", "/"},
+		{"comment", "/posts/42/comments", 30, "2", "/"},
+		{"post reaction", "/posts/42/react", 60, "1", "/"},
+		{"comment reaction", "/comments/15/react", 60, "1", "/"},
 	}
 
 	for _, tt := range tests {
@@ -414,16 +422,15 @@ func TestHTTPRateLimiterEnforcesSpecificRules(t *testing.T) {
 					http.StatusTooManyRequests,
 				)
 			}
-			wantBody := http.StatusText(
-				http.StatusTooManyRequests,
-			) + "\n"
-
-			if rec.Body.String() != wantBody {
-				t.Errorf(
-					"limited response body = %q, want %q",
-					rec.Body.String(),
-					wantBody,
-				)
+			body := rec.Body.String()
+			if !strings.Contains(body, "Too Many Requests") {
+				t.Error("limited response does not explain the error")
+			}
+			if !strings.Contains(body, `href="`+tt.returnPath+`"`) {
+				t.Errorf("limited response does not link to %q", tt.returnPath)
+			}
+			if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+				t.Errorf("Content-Type = %q, want HTML", got)
 			}
 
 			if got := rec.Header().Get("Retry-After"); got != tt.retryAfter {
