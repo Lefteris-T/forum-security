@@ -12,9 +12,10 @@
     <div class="form-layout">
         <section class="form-card" aria-labelledby="new-post-title">
             <header class="form-intro"><p class="eyebrow">New conversation</p><h1 id="new-post-title">Share something worth discussing.</h1><p>A clear title and a little context go a long way.</p></header>
+            {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
             <form method="post" action="/posts" enctype="multipart/form-data">
-                <div class="field"><div class="field-row"><label for="title">Title</label><span class="field-hint">Keep it specific</span></div><input id="title" name="title" type="text" placeholder="What would you like to talk about?" required autofocus></div>
-                <div class="field"><div class="field-row"><label for="body">Your post</label><span class="field-hint">Add the useful details</span></div><textarea id="body" name="body" rows="9" placeholder="Give people enough context to join in…" required></textarea></div>
+                <div class="field"><div class="field-row"><label for="title">Title</label><span class="field-hint">Keep it specific</span></div><input id="title" name="title" type="text" value="{{.Title}}" placeholder="What would you like to talk about?" required autofocus></div>
+                <div class="field"><div class="field-row"><label for="body">Your post</label><span class="field-hint">Add the useful details</span></div><textarea id="body" name="body" rows="9" placeholder="Give people enough context to join in…" required>{{.Body}}</textarea></div>
                 <div class="field">
                     <div class="field-row"><label for="image">Add an image <span class="field-hint">(optional)</span></label><span class="field-hint">JPEG, PNG, GIF · 20 MB max</span></div>
                     <div class="upload-zone">
@@ -24,7 +25,7 @@
                         <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/gif">
                     </div>
                 </div>
-                <fieldset><legend>Choose a category <span aria-hidden="true">*</span></legend>{{range .Categories}}<span class="category-option"><input id="category-{{.ID}}" name="category" type="radio" value="{{.ID}}" required><label for="category-{{.ID}}">{{.Name}}</label></span>{{end}}</fieldset>
+                <fieldset><legend>Choose a category <span aria-hidden="true">*</span></legend>{{range .Categories}}<span class="category-option"><input id="category-{{.ID}}" name="category" type="radio" value="{{.ID}}" {{if index $.SelectedCategoryIDs .ID}}checked{{end}} required><label for="category-{{.ID}}">{{.Name}}</label></span>{{end}}</fieldset>
                 <button class="submit-button" type="submit">Publish conversation <span aria-hidden="true">→</span></button>
             </form>
         </section>

@@ -54,8 +54,12 @@ type PostCreationHandler struct {
 }
 
 type newPostPageData struct {
-	Categories  []model.Category
-	CurrentUser *model.User
+	Categories          []model.Category
+	CurrentUser         *model.User
+	Error               string
+	Title               string
+	Body                string
+	SelectedCategoryIDs map[int64]bool
 }
 
 // NewPostCreationHandler constructs post-creation HTTP behavior.
@@ -110,33 +114,11 @@ func (h *PostCreationHandler) handleGet(
 		return
 	}
 
-	categories, err := h.categories.All()
-	if err != nil {
-		http.Error(
-			w,
-			http.StatusText(http.StatusInternalServerError),
-			http.StatusInternalServerError,
-		)
-		return
-	}
-
 	data := newPostPageData{
-		Categories:  categories,
 		CurrentUser: &user,
 	}
 
-	if err := h.renderer.Render(
-		w,
-		http.StatusOK,
-		"new_post.html",
-		data,
-	); err != nil {
-		http.Error(
-			w,
-			http.StatusText(http.StatusInternalServerError),
-			http.StatusInternalServerError,
-		)
-	}
+	h.renderForm(w, http.StatusOK, data)
 }
 
 func (h *PostCreationHandler) handlePost(
@@ -184,7 +166,10 @@ func (h *PostCreationHandler) handlePost(
 	if parseErr != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(parseErr, &maxBytesErr) {
-			http.Error(w, imageTooLargeMessage, http.StatusBadRequest)
+			h.renderForm(w, http.StatusBadRequest, newPostPageData{
+				CurrentUser: &user,
+				Error:       imageTooLargeMessage,
+			})
 			return
 		}
 
@@ -194,6 +179,13 @@ func (h *PostCreationHandler) handlePost(
 			http.StatusBadRequest,
 		)
 		return
+	}
+
+	formData := newPostPageData{
+		CurrentUser:         &user,
+		Title:               r.FormValue("title"),
+		Body:                r.FormValue("body"),
+		SelectedCategoryIDs: make(map[int64]bool),
 	}
 
 	categoryValues := r.Form["category"]
@@ -223,6 +215,7 @@ func (h *PostCreationHandler) handlePost(
 			categoryIDs,
 			id,
 		)
+		formData.SelectedCategoryIDs[id] = true
 	}
 
 	imagePath := ""
@@ -258,7 +251,16 @@ func (h *PostCreationHandler) handlePost(
 
 			imagePath, err = h.images.Save(imageFile)
 			if err != nil {
-				writeImageUploadError(w, err)
+				if message, ok := imageUploadErrorMessage(err); ok {
+					formData.Error = message
+					h.renderForm(w, http.StatusBadRequest, formData)
+				} else {
+					http.Error(
+						w,
+						http.StatusText(http.StatusInternalServerError),
+						http.StatusInternalServerError,
+					)
+				}
 				return
 			}
 		}
@@ -294,6 +296,37 @@ func (h *PostCreationHandler) handlePost(
 	)
 }
 
+func (h *PostCreationHandler) renderForm(
+	w http.ResponseWriter,
+	status int,
+	data newPostPageData,
+) {
+	categories, err := h.categories.All()
+	if err != nil {
+		http.Error(
+			w,
+			http.StatusText(http.StatusInternalServerError),
+			http.StatusInternalServerError,
+		)
+		return
+	}
+
+	data.Categories = categories
+
+	if err := h.renderer.Render(
+		w,
+		status,
+		"new_post.html",
+		data,
+	); err != nil {
+		http.Error(
+			w,
+			http.StatusText(http.StatusInternalServerError),
+			http.StatusInternalServerError,
+		)
+	}
+}
+
 func writePostCreationError(w http.ResponseWriter, err error) {
 	if isPostValidationError(err) {
 		http.Error(
@@ -320,23 +353,19 @@ func isPostValidationError(err error) bool {
 		errors.Is(err, validation.ErrPostDuplicateCategory)
 }
 
-func writeImageUploadError(w http.ResponseWriter, err error) {
+func imageUploadErrorMessage(err error) (string, bool) {
 	switch {
 	case errors.Is(err, upload.ErrImageTooLarge):
-		http.Error(w, imageTooLargeMessage, http.StatusBadRequest)
+		return imageTooLargeMessage, true
 
 	case errors.Is(err, upload.ErrUnsupportedImageType):
-		http.Error(w, unsupportedImageMessage, http.StatusBadRequest)
+		return unsupportedImageMessage, true
 
 	case errors.Is(err, upload.ErrEmptyImage),
 		errors.Is(err, upload.ErrUnreadableImage):
-		http.Error(w, unreadableImageMessage, http.StatusBadRequest)
+		return unreadableImageMessage, true
 
 	default:
-		http.Error(
-			w,
-			http.StatusText(http.StatusInternalServerError),
-			http.StatusInternalServerError,
-		)
+		return "", false
 	}
 }

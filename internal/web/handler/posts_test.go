@@ -35,6 +35,28 @@ func (f *fakeCategoryReader) All() ([]model.Category, error) {
 	return f.categories, f.err
 }
 
+func newPostFormTestDependencies(
+	t *testing.T,
+) (*fakeCategoryReader, *view.Renderer) {
+	t.Helper()
+
+	renderer, err := view.NewRenderer(
+		filepath.Join("..", "..", "..", "templates"),
+	)
+	if err != nil {
+		t.Fatalf("view.NewRenderer(): %v", err)
+	}
+
+	categories := &fakeCategoryReader{
+		categories: []model.Category{
+			{ID: 1, Name: "General"},
+			{ID: 2, Name: "Go"},
+		},
+	}
+
+	return categories, renderer
+}
+
 type fakePostReader struct {
 	posts         []repository.PostListItem
 	detail        repository.PostDetail
@@ -1098,7 +1120,13 @@ func TestPostCreationHandlerPOSTMapsImageStorageErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			images := &fakePostImageStorage{saveErr: tt.storageErr}
 			service := &fakePostCreationService{postID: 99}
-			h := NewPostCreationHandler(service, nil, nil, images)
+			categories, renderer := newPostFormTestDependencies(t)
+			h := NewPostCreationHandler(
+				service,
+				categories,
+				renderer,
+				images,
+			)
 
 			req := newMultipartImagePostRequest(t, mustPostPNG(t))
 			rec := httptest.NewRecorder()
@@ -1112,6 +1140,23 @@ func TestPostCreationHandlerPOSTMapsImageStorageErrors(t *testing.T) {
 			}
 			if strings.Contains(rec.Body.String(), unexpectedErr.Error()) {
 				t.Fatal("response leaked internal storage error")
+			}
+			if tt.wantStatus == http.StatusBadRequest {
+				body := rec.Body.String()
+				for _, expected := range []string{
+					`role="alert"`,
+					`<form method="post" action="/posts"`,
+					`value="Image post"`,
+					`>Post with an image</textarea>`,
+					`value="1" checked`,
+				} {
+					if !strings.Contains(body, expected) {
+						t.Errorf("form response does not contain %q", expected)
+					}
+				}
+				if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want HTML", got)
+				}
 			}
 			if service.called {
 				t.Fatal("post service Create() was called after image failure")
@@ -1239,7 +1284,8 @@ func TestPostCreationHandlerPOSTRejectsMalformedMultipart(t *testing.T) {
 func TestPostCreationHandlerPOSTRejectsExcessiveMultipartRequest(t *testing.T) {
 	images := &fakePostImageStorage{}
 	service := &fakePostCreationService{postID: 99}
-	h := NewPostCreationHandler(service, nil, nil, images)
+	categories, renderer := newPostFormTestDependencies(t)
+	h := NewPostCreationHandler(service, categories, renderer, images)
 
 	req := newMultipartImagePostRequest(
 		t,
@@ -1250,6 +1296,13 @@ func TestPostCreationHandlerPOSTRejectsExcessiveMultipartRequest(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), `role="alert"`) ||
+		!strings.Contains(rec.Body.String(), imageTooLargeMessage) {
+		t.Fatal("excessive request did not render the inline form error")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want HTML", got)
 	}
 	if images.saveCalled {
 		t.Fatal("image storage Save() was called for excessive request")
@@ -1301,7 +1354,13 @@ func TestPostCreationHandlerPOSTEnforcesExactImageSizeBoundary(t *testing.T) {
 				t.Fatalf("upload.NewStorage(): %v", err)
 			}
 			service := &fakePostCreationService{postID: 99}
-			h := NewPostCreationHandler(service, nil, nil, images)
+			categories, renderer := newPostFormTestDependencies(t)
+			h := NewPostCreationHandler(
+				service,
+				categories,
+				renderer,
+				images,
+			)
 
 			req := newMultipartImagePostRequest(t, imageBytes)
 			if tt.contentLength == -1 {
